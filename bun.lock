@@ -5,11 +5,19 @@
     "": {
       "name": "rspress-plugin-obsidian-wikilink",
       "dependencies": {
-        "typescript": "^6.0.2",
+        "github-slugger": "^2.0.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
+        "remark-parse": "^11.0.0",
+        "remark-stringify": "^11.0.0",
         "rspress-plugin-devkit": "^1.0.0",
+        "typescript": "^6.0.2",
+        "unified": "^11.0.5",
+      },
+      "peerDependencies": {
+        "@rspress/core": "^2.0.8",
+        "typescript": "^6.0.2",
       },
     },
   },
