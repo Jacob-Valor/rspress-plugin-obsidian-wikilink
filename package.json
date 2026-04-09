@@ -1,0 +1,11 @@
+{
+  "name": "rspress-plugin-obsidian-wikilink",
+  "version": "0.0.1",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "rspress-plugin-devkit": "^1.0.0"
+  },
+  "dependencies": {
+    "typescript": "^6.0.2"
+  }
+}
