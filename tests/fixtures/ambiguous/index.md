@@ -1,0 +1,3 @@
+# Home
+
+Try [[getting-started]].
