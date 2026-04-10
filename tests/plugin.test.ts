@@ -11,6 +11,8 @@ import { resolveWikiLink } from "../src/resolve-wikilink";
 const fixtureRoot = path.resolve(process.cwd(), "tests/fixtures/basic");
 const strictFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/strict");
 const headingFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/headings");
+const aliasFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/aliases");
+const aliasAmbiguousFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/alias-ambiguous");
 
 describe("parseWikiLink", () => {
   test("parses alias and anchor", () => {
@@ -19,17 +21,38 @@ describe("parseWikiLink", () => {
     expect(parsed).toEqual({
       raw: "[[guide/getting-started#Install|Install guide]]",
       target: "guide/getting-started",
-      anchor: "Install",
       alias: "Install guide",
-      isCurrentPageAnchor: false,
+      isEmbed: false,
+      subpath: {
+        kind: "heading",
+        value: "Install",
+      },
+      isCurrentPageReference: false,
     });
   });
 
-  test("finds non-embed wikilinks only", () => {
-    const matches = findWikilinkMatches("See [[Page]] but ignore ![[Embed]]");
+  test("parses embeds and block references", () => {
+    const parsed = parseWikiLink("guide/getting-started#^install-block|Install block", "![[guide/getting-started#^install-block|Install block]]");
 
-    expect(matches).toHaveLength(1);
+    expect(parsed).toEqual({
+      raw: "![[guide/getting-started#^install-block|Install block]]",
+      target: "guide/getting-started",
+      alias: "Install block",
+      isEmbed: true,
+      subpath: {
+        kind: "block",
+        value: "install-block",
+      },
+      isCurrentPageReference: false,
+    });
+  });
+
+  test("finds standard and embed wikilinks", () => {
+    const matches = findWikilinkMatches("See [[Page]] and ![[Embed]]");
+
+    expect(matches).toHaveLength(2);
     expect(matches[0]?.fullMatch).toBe("[[Page]]");
+    expect(matches[1]?.fullMatch).toBe("![[Embed]]");
   });
 });
 
@@ -40,6 +63,7 @@ describe("buildContentIndex", () => {
 
     expect(page?.routePath).toBe("/guide/getting-started");
     expect(page?.headings.map((heading) => heading.slug)).toContain("install");
+    expect(page?.blocks).toEqual([{ id: "install-block" }]);
   });
 
   test("caches repeated content-index reads when files are unchanged", () => {
@@ -59,6 +83,16 @@ describe("buildContentIndex", () => {
       { rawText: "Spaced ATX Heading", slug: "spaced-atx-heading" },
       { rawText: "Custom Anchor", slug: "custom-anchor", explicitId: "custom-anchor" },
     ]);
+  });
+
+  test("extracts frontmatter titles and aliases", () => {
+    const index = buildContentIndex(aliasFixtureRoot);
+    const page = index.byPathKey.get("guide/getting-started");
+
+    expect(page?.title).toBe("Onboarding Guide");
+    expect(page?.aliases).toEqual(["Start Here", "Kickoff"]);
+    expect(index.byTitle.get("onboarding guide")?.[0]?.pathKey).toBe("guide/getting-started");
+    expect(index.byAlias.get("start here")?.[0]?.pathKey).toBe("guide/getting-started");
   });
 });
 
@@ -95,11 +129,46 @@ describe("resolveWikiLink", () => {
     });
   });
 
+  test("resolves title and alias lookups when unique", () => {
+    const index = buildContentIndex(aliasFixtureRoot);
+    const currentPage = index.byPathKey.get("")!;
+
+    const aliasResult = resolveWikiLink(parseWikiLink("Start Here", "[[Start Here]]"), {
+      currentPage,
+      index,
+    });
+    const titleResult = resolveWikiLink(parseWikiLink("Onboarding Guide", "[[Onboarding Guide]]"), {
+      currentPage,
+      index,
+    });
+
+    expect(aliasResult).toMatchObject({
+      status: "ok",
+      href: "/guide/getting-started",
+    });
+    expect(titleResult).toMatchObject({
+      status: "ok",
+      href: "/guide/getting-started",
+    });
+  });
+
   test("reports ambiguous basename links", () => {
     const index = buildContentIndex(path.resolve(process.cwd(), "tests/fixtures/ambiguous"));
     const currentPage = index.byPathKey.get("")!;
 
     const result = resolveWikiLink(parseWikiLink("getting-started", "[[getting-started]]"), {
+      currentPage,
+      index,
+    });
+
+    expect(result.status).toBe("ambiguous-page");
+  });
+
+  test("reports ambiguous alias links", () => {
+    const index = buildContentIndex(aliasAmbiguousFixtureRoot);
+    const currentPage = index.byPathKey.get("")!;
+
+    const result = resolveWikiLink(parseWikiLink("Shared Alias", "[[Shared Alias]]"), {
       currentPage,
       index,
     });
@@ -119,6 +188,22 @@ describe("resolveWikiLink", () => {
     expect(result.status).toBe("broken-anchor");
   });
 
+  test("resolves block references", () => {
+    const index = buildContentIndex(fixtureRoot);
+    const currentPage = index.byPathKey.get("")!;
+
+    const result = resolveWikiLink(parseWikiLink("guide/getting-started#^install-block", "[[guide/getting-started#^install-block]]"), {
+      currentPage,
+      index,
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      href: "/guide/getting-started#^install-block",
+      label: "install-block",
+    });
+  });
+
   test("keeps exact path matching strict by case", () => {
     const index = buildContentIndex(strictFixtureRoot);
     const currentPage = index.byPathKey.get("")!;
@@ -129,6 +214,24 @@ describe("resolveWikiLink", () => {
     });
 
     expect(result.status).toBe("broken-page");
+  });
+
+  test("supports optional fuzzy path matching", () => {
+    const index = buildContentIndex(strictFixtureRoot);
+    const currentPage = index.byPathKey.get("")!;
+
+    const result = resolveWikiLink(parseWikiLink("guide/casesensitive", "[[guide/casesensitive]]"), {
+      currentPage,
+      index,
+      options: {
+        enableFuzzyMatching: true,
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      href: "/guide/CaseSensitive",
+    });
   });
 
   test("rejects malformed empty targets", () => {
@@ -175,6 +278,7 @@ describe("remarkWikilink", () => {
         options: {
           onBrokenLink: "error",
           onAmbiguousLink: "error",
+          enableFuzzyMatching: false,
         },
       })
       .use(remarkStringify);
@@ -195,6 +299,7 @@ describe("remarkWikilink", () => {
         options: {
           onBrokenLink: "error",
           onAmbiguousLink: "error",
+          enableFuzzyMatching: false,
         },
       })
       .use(remarkStringify);
@@ -205,5 +310,47 @@ describe("remarkWikilink", () => {
     });
 
     expect(String(file)).toBe("Jump to [Overview](#overview).\n");
+  });
+
+  test("rewrites block references into markdown links", async () => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(remarkWikilink, {
+        getDocsRoot: () => fixtureRoot,
+        options: {
+          onBrokenLink: "error",
+          onAmbiguousLink: "error",
+          enableFuzzyMatching: false,
+        },
+      })
+      .use(remarkStringify);
+
+    const file = await processor.process({
+      value: "Jump to [[guide/getting-started#^install-block]].",
+      path: path.resolve(fixtureRoot, "index.md"),
+    });
+
+    expect(String(file)).toBe("Jump to [install-block](/guide/getting-started#^install-block).\n");
+  });
+
+  test("rewrites embeds into embed html anchors", async () => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(remarkWikilink, {
+        getDocsRoot: () => fixtureRoot,
+        options: {
+          onBrokenLink: "error",
+          onAmbiguousLink: "error",
+          enableFuzzyMatching: false,
+        },
+      })
+      .use(remarkStringify);
+
+    const file = await processor.process({
+      value: "![[guide/getting-started#Install|Install guide]]",
+      path: path.resolve(fixtureRoot, "index.md"),
+    });
+
+    expect(String(file)).toBe('<a class="obsidian-embed" data-obsidian-embed="true" href="/guide/getting-started#install">Install guide</a>\n');
   });
 });
