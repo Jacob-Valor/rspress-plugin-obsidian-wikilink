@@ -1,57 +1,72 @@
 {
-  "name": "rspress-plugin-obsidian-wikilink",
-  "version": "0.0.1",
-  "description": "Obsidian-style wikilinks for Rspress.",
-  "keywords": [
-    "rspress",
-    "obsidian",
-    "wikilink",
-    "wiki-links",
-    "remark",
-    "markdown"
-  ],
-  "license": "MIT",
-  "type": "module",
-  "files": [
-    "dist"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/issues"
-  },
-  "homepage": "https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink#readme",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "prepare": "bun run build",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "docs:dev": "bunx rspress dev",
-    "docs:build": "bunx rspress build"
-  },
-  "dependencies": {
-    "github-slugger": "^2.0.0"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "remark-parse": "^11.0.0",
-    "remark-stringify": "^11.0.0",
-    "rspress-plugin-devkit": "^1.0.0",
-    "typescript": "^6.0.2",
-    "unified": "^11.0.5"
-  },
-  "peerDependencies": {
-    "@rspress/core": "^2.0.8",
-    "typescript": "^6.0.2"
-  }
+	"name": "rspress-plugin-obsidian-wikilink",
+	"version": "0.0.0-development",
+	"description": "Obsidian-style wikilinks for Rspress.",
+	"keywords": [
+		"rspress",
+		"obsidian",
+		"wikilink",
+		"wiki-links",
+		"remark",
+		"markdown"
+	],
+	"license": "MIT",
+	"type": "module",
+	"files": [
+		"src"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/issues"
+	},
+	"homepage": "https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink#readme",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"import": "./src/index.ts"
+		}
+	},
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check src/ tests/",
+		"lint:fix": "biome check --write src/ tests/",
+		"format": "biome format --write src/ tests/",
+		"test": "bun test",
+		"docs:dev": "bunx rspress dev",
+		"docs:build": "bunx rspress build",
+		"release": "semantic-release --no-ci",
+		"release:dry": "semantic-release --no-ci --dry-run",
+		"postrelease": "git fetch origin main:refs/remotes/origin/main --no-tags || true"
+	},
+	"dependencies": {
+		"github-slugger": "^2.0.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.11",
+		"@semantic-release/changelog": "^6.0.3",
+		"@semantic-release/commit-analyzer": "^13.0.1",
+		"@semantic-release/exec": "^6.0.3",
+		"@semantic-release/git": "^10.0.1",
+		"@semantic-release/github": "^11.0.6",
+		"@semantic-release/release-notes-generator": "^14.1.0",
+		"@types/bun": "latest",
+		"remark-parse": "^11.0.0",
+		"remark-stringify": "^11.0.0",
+		"rspress-plugin-devkit": "^1.0.0",
+		"semantic-release": "^25.0.3",
+		"typescript": "^6.0.2",
+		"unified": "^11.0.5"
+	},
+	"peerDependencies": {
+		"@rspress/core": "^2.0.8",
+		"typescript": "^6.0.2"
+	},
+	"engines": {
+		"node": ">=22.14.0"
+	}
 }
