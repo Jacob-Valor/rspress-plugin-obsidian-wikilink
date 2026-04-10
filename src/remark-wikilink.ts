@@ -1,4 +1,4 @@
-import type { Link, PhrasingContent, Root, Text } from "mdast";
+import type { HTML, Link, PhrasingContent, Root, Text } from "mdast";
 import type { Parent } from "unist";
 import type { VFile } from "vfile";
 import { unistVisit, type RemarkPluginFactory } from "rspress-plugin-devkit";
@@ -56,6 +56,9 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
         const resolved = resolveWikiLink(parsed, {
           currentPage,
           index,
+          options: {
+            enableFuzzyMatching: options.enableFuzzyMatching,
+          },
         });
 
         if (resolved.status === "ok") {
@@ -63,7 +66,9 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
           const label = resolved.label;
 
           if (href && label) {
-            replacementNodes.push(createLinkNode(href, label));
+            replacementNodes.push(
+              parsed.isEmbed ? createEmbedNode(href, label) : createLinkNode(href, label),
+            );
           } else {
             replacementNodes.push(createTextNode(parsed.raw));
           }
@@ -131,6 +136,24 @@ function createLinkNode(url: string, label: string): Link {
       },
     ],
   };
+}
+
+function createEmbedNode(url: string, label: string): HTML {
+  return {
+    type: "html",
+    value: `<a class="obsidian-embed" data-obsidian-embed="true" href="${escapeHtmlAttribute(url)}">${escapeHtmlText(label)}</a>`,
+  };
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtmlText(value).replace(/"/g, "&quot;");
 }
 
 function reportDiagnostic(
