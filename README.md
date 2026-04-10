@@ -104,7 +104,6 @@ Supported heading resolution includes:
 bun install
 bun run typecheck
 bun test
-bun run build
 bun run docs:build
 ```
 
