@@ -1,448 +1,443 @@
 import fs from "node:fs";
 import path from "node:path";
 import GithubSlugger from "github-slugger";
+import { normalizeLookupValue, stripMarkdownFormatting } from "./slug.ts";
 import type {
-  BlockEntry,
-  ContentIndex,
-  ContentPage,
-  HeadingEntry,
-} from "./types.js";
-import { normalizeLookupValue, stripMarkdownFormatting } from "./slug.js";
+	BlockEntry,
+	ContentIndex,
+	ContentPage,
+	HeadingEntry,
+} from "./types.ts";
+import { normalizeFsPath, normalizePathKey } from "./utils.ts";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
 const contentIndexCache = new Map<
-  string,
-  { signature: string; index: ContentIndex }
+	string,
+	{ signature: string; index: ContentIndex }
 >();
 
 interface MarkdownFileEntry {
-  absolutePath: string;
-  relativePath: string;
-  mtimeMs: number;
-  size: number;
+	absolutePath: string;
+	relativePath: string;
+	mtimeMs: number;
+	size: number;
 }
 
-export function buildContentIndex(rootDir: string): ContentIndex {
-  const absoluteRoot = path.resolve(rootDir);
-  const files = scanMarkdownFiles(absoluteRoot);
-  return buildContentIndexFromFiles(absoluteRoot, files);
+export async function buildContentIndex(
+	rootDir: string,
+): Promise<ContentIndex> {
+	const absoluteRoot = path.resolve(rootDir);
+	const files = scanMarkdownFiles(absoluteRoot);
+	return buildContentIndexFromFiles(absoluteRoot, files);
 }
 
-export function getCachedContentIndex(rootDir: string): ContentIndex {
-  const absoluteRoot = path.resolve(rootDir);
-  const files = scanMarkdownFiles(absoluteRoot);
-  const signature = files
-    .map((file) => `${file.relativePath}:${file.mtimeMs}:${file.size}`)
-    .join("|");
+export async function getCachedContentIndex(
+	rootDir: string,
+): Promise<ContentIndex> {
+	const absoluteRoot = path.resolve(rootDir);
+	const files = scanMarkdownFiles(absoluteRoot);
+	const signature = files
+		.map((file) => `${file.relativePath}:${file.mtimeMs}:${file.size}`)
+		.join("|");
 
-  const cached = contentIndexCache.get(absoluteRoot);
-  if (cached?.signature === signature) {
-    return cached.index;
-  }
+	const cached = contentIndexCache.get(absoluteRoot);
+	if (cached?.signature === signature) {
+		return cached.index;
+	}
 
-  const index = buildContentIndexFromFiles(absoluteRoot, files);
-  contentIndexCache.set(absoluteRoot, { signature, index });
-  return index;
+	const index = await buildContentIndexFromFiles(absoluteRoot, files);
+	contentIndexCache.set(absoluteRoot, { signature, index });
+	return index;
 }
 
-function buildContentIndexFromFiles(
-  rootDir: string,
-  files: MarkdownFileEntry[],
-): ContentIndex {
-  const pages = files.map((file) => buildContentPage(file));
-  const byAbsolutePath = new Map<string, ContentPage>();
-  const byPathKey = new Map<string, ContentPage>();
-  const byBaseName = new Map<string, ContentPage[]>();
-  const byTitle = new Map<string, ContentPage[]>();
-  const byAlias = new Map<string, ContentPage[]>();
+async function buildContentIndexFromFiles(
+	rootDir: string,
+	files: MarkdownFileEntry[],
+): Promise<ContentIndex> {
+	const pages = await Promise.all(files.map((file) => buildContentPage(file)));
+	const byAbsolutePath = new Map<string, ContentPage>();
+	const byPathKey = new Map<string, ContentPage>();
+	const byBaseName = new Map<string, ContentPage[]>();
+	const byTitle = new Map<string, ContentPage[]>();
+	const byAlias = new Map<string, ContentPage[]>();
 
-  for (const page of pages) {
-    byAbsolutePath.set(page.absolutePath, page);
-    byPathKey.set(page.pathKey, page);
+	for (const page of pages) {
+		byAbsolutePath.set(page.absolutePath, page);
+		byPathKey.set(page.pathKey, page);
 
-    if (page.baseName.length > 0) {
-      const existing = byBaseName.get(page.baseName) ?? [];
-      existing.push(page);
-      byBaseName.set(page.baseName, existing);
-    }
+		if (page.baseName.length > 0) {
+			const existing = byBaseName.get(page.baseName) ?? [];
+			existing.push(page);
+			byBaseName.set(page.baseName, existing);
+		}
 
-    if (page.title) {
-      pushNamedPage(byTitle, page.title, page);
-    }
+		if (page.title) {
+			pushNamedPage(byTitle, page.title, page);
+		}
 
-    for (const alias of page.aliases) {
-      pushNamedPage(byAlias, alias, page);
-    }
-  }
+		for (const alias of page.aliases) {
+			pushNamedPage(byAlias, alias, page);
+		}
+	}
 
-  return {
-    rootDir,
-    pages,
-    byAbsolutePath,
-    byPathKey,
-    byBaseName,
-    byTitle,
-    byAlias,
-  };
+	return {
+		rootDir,
+		pages,
+		byAbsolutePath,
+		byPathKey,
+		byBaseName,
+		byTitle,
+		byAlias,
+	};
 }
 
 function scanMarkdownFiles(rootDir: string): MarkdownFileEntry[] {
-  const results: MarkdownFileEntry[] = [];
-  const queue = [rootDir];
+	const results: MarkdownFileEntry[] = [];
+	const queue = [rootDir];
 
-  while (queue.length > 0) {
-    const currentDir = queue.shift();
-    if (!currentDir) {
-      continue;
-    }
+	while (queue.length > 0) {
+		const currentDir = queue.shift();
+		if (!currentDir) {
+			continue;
+		}
 
-    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+		const entries = fs.readdirSync(currentDir, { withFileTypes: true });
 
-    for (const entry of entries) {
-      const absolutePath = path.join(currentDir, entry.name);
+		for (const entry of entries) {
+			const absolutePath = path.join(currentDir, entry.name);
 
-      if (entry.isDirectory()) {
-        if (
-          entry.name === ".git" ||
-          entry.name === "node_modules" ||
-          entry.name.startsWith(".")
-        ) {
-          continue;
-        }
+			if (entry.isDirectory()) {
+				if (
+					entry.name === ".git" ||
+					entry.name === "node_modules" ||
+					entry.name.startsWith(".")
+				) {
+					continue;
+				}
 
-        queue.push(absolutePath);
-        continue;
-      }
+				queue.push(absolutePath);
+				continue;
+			}
 
-      if (!entry.isFile()) {
-        continue;
-      }
+			if (!entry.isFile()) {
+				continue;
+			}
 
-      if (!MARKDOWN_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        continue;
-      }
+			if (!MARKDOWN_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+				continue;
+			}
 
-      const relativePath = normalizeFsPath(
-        path.relative(rootDir, absolutePath),
-      );
-      if (!isRoutableRelativePath(relativePath)) {
-        continue;
-      }
+			const relativePath = normalizeFsPath(
+				path.relative(rootDir, absolutePath),
+			);
+			if (!isRoutableRelativePath(relativePath)) {
+				continue;
+			}
 
-      const stats = fs.statSync(absolutePath);
-      results.push({
-        absolutePath: normalizeFsPath(path.resolve(absolutePath)),
-        relativePath,
-        mtimeMs: stats.mtimeMs,
-        size: stats.size,
-      });
-    }
-  }
+			const stats = fs.statSync(absolutePath);
+			results.push({
+				absolutePath: normalizeFsPath(path.resolve(absolutePath)),
+				relativePath,
+				mtimeMs: stats.mtimeMs,
+				size: stats.size,
+			});
+		}
+	}
 
-  results.sort((left, right) =>
-    left.relativePath.localeCompare(right.relativePath),
-  );
-  return results;
+	results.sort((left, right) =>
+		left.relativePath.localeCompare(right.relativePath),
+	);
+	return results;
 }
 
 function isRoutableRelativePath(relativePath: string): boolean {
-  return relativePath.split("/").every((segment) => !/^_[^_]/.test(segment));
+	return relativePath.split("/").every((segment) => !/^_[^_]/.test(segment));
 }
 
-function buildContentPage(file: MarkdownFileEntry): ContentPage {
-  const markdown = fs.readFileSync(file.absolutePath, "utf8");
-  const routePath = deriveRoutePath(file.relativePath);
-  const pathKey = normalizePathKey(file.relativePath);
-  const baseName = path.basename(pathKey);
-  const { title, aliases } = extractFrontmatterMetadata(markdown);
-  const headings = extractHeadings(markdown);
-  const blocks = extractBlocks(markdown);
+async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
+	const markdown = await Bun.file(file.absolutePath).text();
+	const routePath = deriveRoutePath(file.relativePath);
+	const pathKey = normalizePathKey(file.relativePath);
+	const baseName = path.basename(pathKey);
+	const { title, aliases } = extractFrontmatterMetadata(markdown);
+	const headings = extractHeadings(markdown);
+	const blocks = extractBlocks(markdown);
 
-  return {
-    absolutePath: file.absolutePath,
-    relativePath: file.relativePath,
-    routePath,
-    pathKey,
-    baseName,
-    title,
-    aliases,
-    headings,
-    blocks,
-  };
+	return {
+		absolutePath: file.absolutePath,
+		relativePath: file.relativePath,
+		routePath,
+		pathKey,
+		baseName,
+		title,
+		aliases,
+		headings,
+		blocks,
+	};
 }
 
 function deriveRoutePath(relativePath: string): string {
-  const withoutExtension = relativePath.replace(/\.(md|mdx)$/i, "");
-  const routeKey = normalizePathKey(withoutExtension);
-  return routeKey.length === 0 ? "/" : `/${routeKey}`;
+	const withoutExtension = relativePath.replace(/\.(md|mdx)$/i, "");
+	const routeKey = normalizePathKey(withoutExtension);
+	return routeKey.length === 0 ? "/" : `/${routeKey}`;
 }
 
-export function normalizePathKey(input: string): string {
-  const normalized = normalizeFsPath(input)
-    .replace(/\.(md|mdx)$/i, "")
-    .replace(/^\/+|\/+$/g, "")
-    .replace(/\/index$/i, "")
-    .trim();
+export { normalizePathKey } from "./utils.ts";
 
-  if (normalized.length === 0 || normalized.toLowerCase() === "index") {
-    return "";
-  }
+function getContentLineFlags(lines: string[]): boolean[] {
+	const flags = new Array<boolean>(lines.length).fill(false);
+	let inFence = false;
+	let inFrontmatter = lines[0]?.trim() === "---";
 
-  return normalized.replace(/\\/g, "/");
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index] ?? "";
+
+		if (inFrontmatter) {
+			if (index > 0 && line.trim() === "---") {
+				inFrontmatter = false;
+			}
+			continue;
+		}
+
+		if (/^(```|~~~)/.test(line.trim())) {
+			inFence = !inFence;
+			continue;
+		}
+
+		if (inFence) {
+			continue;
+		}
+
+		flags[index] = true;
+	}
+
+	return flags;
 }
 
 function extractHeadings(markdown: string): HeadingEntry[] {
-  const slugger = new GithubSlugger();
-  const headings: HeadingEntry[] = [];
-  const lines = markdown.split(/\r?\n/);
-  let inFence = false;
-  let inFrontmatter = lines[0]?.trim() === "---";
+	const slugger = new GithubSlugger();
+	const headings: HeadingEntry[] = [];
+	const lines = markdown.split(/\r?\n/);
+	const isContent = getContentLineFlags(lines);
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
+	for (let index = 0; index < lines.length; index += 1) {
+		if (!isContent[index]) {
+			continue;
+		}
 
-    if (inFrontmatter) {
-      if (index > 0 && line.trim() === "---") {
-        inFrontmatter = false;
-      }
-      continue;
-    }
+		const line = lines[index] ?? "";
 
-    if (/^(```|~~~)/.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
+		const atxMatch = /^\s{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
+		if (atxMatch) {
+			pushHeading(headings, slugger, atxMatch[2] ?? "");
+			continue;
+		}
 
-    if (inFence) {
-      continue;
-    }
+		const nextLine = lines[index + 1] ?? "";
+		if (!/^\s{0,3}(=+|-+)\s*$/.test(nextLine)) {
+			continue;
+		}
 
-    const atxMatch = /^\s{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
-    if (atxMatch) {
-      pushHeading(headings, slugger, atxMatch[2] ?? "");
-      continue;
-    }
+		const rawHeading = line.trim();
+		if (rawHeading.length === 0) {
+			continue;
+		}
 
-    const nextLine = lines[index + 1] ?? "";
-    if (!/^\s{0,3}(=+|-+)\s*$/.test(nextLine)) {
-      continue;
-    }
+		pushHeading(headings, slugger, rawHeading);
+		index += 1; // skip the setext underline on the next iteration
+	}
 
-    const rawHeading = line.trim();
-    if (rawHeading.length === 0) {
-      continue;
-    }
-
-    pushHeading(headings, slugger, rawHeading);
-    index += 1;
-  }
-
-  return headings;
+	return headings;
 }
 
 function extractBlocks(markdown: string): BlockEntry[] {
-  const blocks: BlockEntry[] = [];
-  const seen = new Set<string>();
-  const lines = markdown.split(/\r?\n/);
-  let inFence = false;
-  let inFrontmatter = lines[0]?.trim() === "---";
+	const blocks: BlockEntry[] = [];
+	const seen = new Set<string>();
+	const lines = markdown.split(/\r?\n/);
+	const isContent = getContentLineFlags(lines);
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
+	for (let index = 0; index < lines.length; index += 1) {
+		if (!isContent[index]) {
+			continue;
+		}
 
-    if (inFrontmatter) {
-      if (index > 0 && line.trim() === "---") {
-        inFrontmatter = false;
-      }
-      continue;
-    }
+		const line = lines[index] ?? "";
 
-    if (/^(```|~~~)/.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
+		const standaloneMatch = /^\^([A-Za-z0-9-]+)\s*$/.exec(line.trim());
+		if (standaloneMatch?.[1]) {
+			pushBlock(blocks, seen, standaloneMatch[1]);
+			continue;
+		}
 
-    if (inFence) {
-      continue;
-    }
+		const explicitIdMatch = line.match(/\{#([A-Za-z0-9-]+)\}\s*$/);
+		if (explicitIdMatch?.[1] && !/^\s{0,3}(#{1,6})[ \t]+/.test(line)) {
+			pushBlock(blocks, seen, explicitIdMatch[1]);
+		}
+	}
 
-    const standaloneMatch = /^\^([A-Za-z0-9-]+)\s*$/.exec(line.trim());
-    if (standaloneMatch?.[1]) {
-      pushBlock(blocks, seen, standaloneMatch[1]);
-      continue;
-    }
-
-    const explicitIdMatch = line.match(/\{#([A-Za-z0-9-]+)\}\s*$/);
-    if (explicitIdMatch?.[1] && !/^\s{0,3}(#{1,6})[ \t]+/.test(line)) {
-      pushBlock(blocks, seen, explicitIdMatch[1]);
-    }
-  }
-
-  return blocks;
+	return blocks;
 }
 
 function pushBlock(blocks: BlockEntry[], seen: Set<string>, id: string): void {
-  const normalizedId = id.trim();
-  if (!normalizedId || seen.has(normalizedId)) {
-    return;
-  }
+	const normalizedId = id.trim();
+	if (!normalizedId || seen.has(normalizedId)) {
+		return;
+	}
 
-  seen.add(normalizedId);
-  blocks.push({ id: normalizedId });
+	seen.add(normalizedId);
+	blocks.push({ id: normalizedId });
 }
 
 function pushHeading(
-  headings: HeadingEntry[],
-  slugger: GithubSlugger,
-  rawHeading: string,
+	headings: HeadingEntry[],
+	slugger: GithubSlugger,
+	rawHeading: string,
 ): void {
-  const trimmedHeading = rawHeading.trim();
-  const explicitIdMatch = trimmedHeading.match(
-    /\s*\{#([A-Za-z0-9_:.\-]+)\}\s*$/,
-  );
-  const explicitId = explicitIdMatch?.[1];
-  const headingText = explicitIdMatch
-    ? trimmedHeading
-        .slice(0, trimmedHeading.length - explicitIdMatch[0].length)
-        .trim()
-    : trimmedHeading;
-  const normalizedText = stripMarkdownFormatting(headingText);
+	const trimmedHeading = rawHeading.trim();
+	const explicitIdMatch = trimmedHeading.match(
+		/\s*\{#([A-Za-z0-9_:.-]+)\}\s*$/,
+	);
+	const explicitId = explicitIdMatch?.[1];
+	const headingText = explicitIdMatch
+		? trimmedHeading
+				.slice(0, trimmedHeading.length - explicitIdMatch[0].length)
+				.trim()
+		: trimmedHeading;
+	const normalizedText = stripMarkdownFormatting(headingText);
 
-  if (normalizedText.length === 0) {
-    return;
-  }
+	if (normalizedText.length === 0) {
+		return;
+	}
 
-  headings.push({
-    rawText: normalizedText,
-    slug: slugger.slug(normalizedText),
-    explicitId,
-  });
+	headings.push({
+		rawText: normalizedText,
+		slug: slugger.slug(normalizedText),
+		explicitId,
+	});
 }
 
 function extractFrontmatterMetadata(markdown: string): {
-  title?: string;
-  aliases: string[];
+	title?: string;
+	aliases: string[];
 } {
-  const lines = markdown.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") {
-    return { aliases: [] };
-  }
+	const lines = markdown.split(/\r?\n/);
+	if (lines[0]?.trim() !== "---") {
+		return { aliases: [] };
+	}
 
-  const closingIndex = lines.findIndex(
-    (line, index) => index > 0 && line.trim() === "---",
-  );
-  if (closingIndex < 0) {
-    return { aliases: [] };
-  }
+	const closingIndex = lines.findIndex(
+		(line, index) => index > 0 && line.trim() === "---",
+	);
+	if (closingIndex < 0) {
+		return { aliases: [] };
+	}
 
-  let title: string | undefined;
-  const aliases: string[] = [];
-  let pendingListKey: "aliases" | undefined;
+	let title: string | undefined;
+	const aliases: string[] = [];
+	let pendingListKey: "aliases" | undefined;
 
-  for (let index = 1; index < closingIndex; index += 1) {
-    const line = lines[index] ?? "";
+	for (let index = 1; index < closingIndex; index += 1) {
+		const line = lines[index] ?? "";
 
-    if (pendingListKey === "aliases") {
-      const aliasMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
-      if (aliasMatch?.[1]) {
-        const aliasValue = stripWrappingQuotes(aliasMatch[1].trim());
-        if (aliasValue) {
-          aliases.push(aliasValue);
-        }
-        continue;
-      }
+		if (pendingListKey === "aliases") {
+			const aliasMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
+			if (aliasMatch?.[1]) {
+				const aliasValue = stripWrappingQuotes(aliasMatch[1].trim());
+				if (aliasValue) {
+					aliases.push(aliasValue);
+				}
+				continue;
+			}
 
-      if (line.trim().length === 0) {
-        continue;
-      }
+			if (line.trim().length === 0) {
+				continue;
+			}
 
-      pendingListKey = undefined;
-    }
+			pendingListKey = undefined;
+		}
 
-    const keyMatch = /^\s*([A-Za-z0-9_-]+)\s*:\s*(.*?)\s*$/.exec(line);
-    if (!keyMatch) {
-      continue;
-    }
+		const keyMatch = /^\s*([A-Za-z0-9_-]+)\s*:\s*(.*?)\s*$/.exec(line);
+		if (!keyMatch) {
+			continue;
+		}
 
-    const rawKey = keyMatch[1];
-    const rawValue = keyMatch[2];
-    if (typeof rawKey !== "string" || typeof rawValue !== "string") {
-      continue;
-    }
+		const rawKey = keyMatch[1];
+		const rawValue = keyMatch[2];
+		if (typeof rawKey !== "string" || typeof rawValue !== "string") {
+			continue;
+		}
 
-    const key = rawKey.toLowerCase();
-    const value = rawValue.trim();
+		const key = rawKey.toLowerCase();
+		const value = rawValue.trim();
 
-    if (key === "title") {
-      const parsedTitle = stripWrappingQuotes(value);
-      if (parsedTitle) {
-        title = parsedTitle;
-      }
-      continue;
-    }
+		if (key === "title") {
+			const parsedTitle = stripWrappingQuotes(value);
+			if (parsedTitle) {
+				title = parsedTitle;
+			}
+			continue;
+		}
 
-    if (key !== "aliases" && key !== "alias") {
-      continue;
-    }
+		if (key !== "aliases" && key !== "alias") {
+			continue;
+		}
 
-    if (value.length === 0) {
-      pendingListKey = "aliases";
-      continue;
-    }
+		if (value.length === 0) {
+			pendingListKey = "aliases";
+			continue;
+		}
 
-    for (const alias of parseInlineAliases(value)) {
-      aliases.push(alias);
-    }
-  }
+		for (const alias of parseInlineAliases(value)) {
+			aliases.push(alias);
+		}
+	}
 
-  return {
-    title,
-    aliases: [...new Set(aliases)],
-  };
+	return {
+		title,
+		aliases: [...new Set(aliases)],
+	};
 }
 
 function parseInlineAliases(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return [];
-  }
+	const trimmed = value.trim();
+	if (!trimmed) {
+		return [];
+	}
 
-  const listMatch = /^\[(.*)\]$/.exec(trimmed);
-  if (!listMatch) {
-    const alias = stripWrappingQuotes(trimmed);
-    return alias ? [alias] : [];
-  }
+	const listMatch = /^\[(.*)\]$/.exec(trimmed);
+	if (!listMatch) {
+		const alias = stripWrappingQuotes(trimmed);
+		return alias ? [alias] : [];
+	}
 
-  const listValue = listMatch[1];
-  if (typeof listValue !== "string") {
-    return [];
-  }
+	const listValue = listMatch[1];
+	if (typeof listValue !== "string") {
+		return [];
+	}
 
-  return listValue
-    .split(",")
-    .map((part) => stripWrappingQuotes(part.trim()))
-    .filter((part): part is string => part.length > 0);
+	return listValue
+		.split(",")
+		.map((part) => stripWrappingQuotes(part.trim()))
+		.filter((part): part is string => part.length > 0);
 }
 
 function stripWrappingQuotes(value: string): string {
-  return value.replace(/^(["'])(.*)\1$/, "$2").trim();
+	return value.replace(/^(["'])(.*)\1$/, "$2").trim();
 }
 
 function pushNamedPage(
-  map: Map<string, ContentPage[]>,
-  rawValue: string,
-  page: ContentPage,
+	map: Map<string, ContentPage[]>,
+	rawValue: string,
+	page: ContentPage,
 ): void {
-  const key = normalizeLookupValue(rawValue);
-  if (!key) {
-    return;
-  }
+	const key = normalizeLookupValue(rawValue);
+	if (!key) {
+		return;
+	}
 
-  const existing = map.get(key) ?? [];
-  existing.push(page);
-  map.set(key, existing);
+	const existing = map.get(key) ?? [];
+	existing.push(page);
+	map.set(key, existing);
 }
 
-export function normalizeFsPath(input: string): string {
-  return input.replace(/\\/g, "/");
-}
+export { normalizeFsPath } from "./utils.ts";
