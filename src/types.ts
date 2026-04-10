@@ -4,6 +4,7 @@ export interface RspressPluginObsidianWikiLinkOptions {
 	onBrokenLink?: DiagnosticMode;
 	onAmbiguousLink?: DiagnosticMode;
 	enableFuzzyMatching?: boolean;
+	enableCaseInsensitiveLookup?: boolean;
 	enableTagLinking?: boolean;
 	enableCallouts?: boolean;
 	enableBacklinks?: boolean;
@@ -15,6 +16,7 @@ export interface NormalizedPluginOptions {
 	onBrokenLink: DiagnosticMode;
 	onAmbiguousLink: DiagnosticMode;
 	enableFuzzyMatching: boolean;
+	enableCaseInsensitiveLookup: boolean;
 	enableTagLinking: boolean;
 	enableCallouts: boolean;
 	enableBacklinks: boolean;
@@ -92,7 +94,12 @@ export interface ResolvedWikiLink {
 export interface ResolveContext {
 	currentPage: ContentPage;
 	index: ContentIndex;
-	options?: Pick<NormalizedPluginOptions, "enableFuzzyMatching">;
+	options?: Partial<
+		Pick<
+			NormalizedPluginOptions,
+			"enableFuzzyMatching" | "enableCaseInsensitiveLookup"
+		>
+	>;
 }
 
 export interface RemarkWikiLinkPluginOptions {

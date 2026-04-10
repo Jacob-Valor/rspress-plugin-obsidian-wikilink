@@ -1,10 +1,17 @@
-import type { HTML, Link, PhrasingContent, Root, Text } from "mdast";
-import { type RemarkPluginFactory, unistVisit } from "rspress-plugin-devkit";
 import fs from "node:fs";
+import type {
+	Blockquote,
+	HTML,
+	Link,
+	PhrasingContent,
+	Root,
+	Text,
+} from "mdast";
+import { type RemarkPluginFactory, unistVisit } from "rspress-plugin-devkit";
 import type { Parent } from "unist";
 import type { VFile } from "vfile";
-import { getCachedContentIndex } from "./content-index.ts";
 import { buildBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
+import { getCachedContentIndex } from "./content-index.ts";
 import { findWikilinkMatches, parseWikiLink } from "./parse-wikilink.ts";
 import { resolveWikiLink } from "./resolve-wikilink.ts";
 import type {
@@ -14,7 +21,7 @@ import type {
 import { normalizeFsPath } from "./utils.ts";
 
 const TAG_PATTERN = /#([a-zA-Z0-9_-]+)/g;
-const CALLOUT_PATTERN = /^> \[!(\w+)\](?:[-+]?\s*(.*))?$/;
+const CALLOUT_HEADER_PATTERN = /^\[!(\w+)\][-+]?\s*(.*)$/;
 
 const WIKILINK_EMBED_PATTERN = /!\[\[([^\]]+)\]\]/g;
 
@@ -73,6 +80,11 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 			return;
 		}
 
+		const resolveOptions = {
+			enableFuzzyMatching: options.enableFuzzyMatching,
+			enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
+		};
+
 		if (options.enableTagLinking) {
 			unistVisit(tree, "text", (node, position, parent) => {
 				if (!parent || typeof position !== "number") {
@@ -93,72 +105,96 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 					return;
 				}
 
-				let result = "";
-				let lastEnd = 0;
+				const replacementNodes: PhrasingContent[] = [];
+				let cursor = 0;
 
 				for (const tag of tags) {
 					const start = tag.index ?? 0;
-					const fullMatch = tag[0];
-					const tagName = tag[1];
+					const fullMatch = tag[0] ?? "";
+					const tagName = tag[1] ?? "";
 
-					if (start > lastEnd) {
-						result += text.slice(lastEnd, start);
+					if (start > cursor) {
+						replacementNodes.push(createTextNode(text.slice(cursor, start)));
 					}
 
-					result += `[${fullMatch}](/tags/${tagName})`;
-					lastEnd = start + fullMatch.length;
+					replacementNodes.push(createLinkNode(`/tags/${tagName}`, fullMatch));
+					cursor = start + fullMatch.length;
 				}
 
-				if (lastEnd < text.length) {
-					result += text.slice(lastEnd);
+				if (cursor < text.length) {
+					replacementNodes.push(createTextNode(text.slice(cursor)));
 				}
 
-				node.value = result;
+				const parentWithChildren = parent as Parent & {
+					children: PhrasingContent[];
+				};
+				parentWithChildren.children.splice(position, 1, ...replacementNodes);
 			});
 		}
 
 		if (options.enableCallouts) {
-			unistVisit(tree, "text", (node) => {
-				const text = node.value;
-				if (!text.includes("[!")) {
+			unistVisit(tree, "blockquote", (node, position, parent) => {
+				if (!parent || typeof position !== "number") {
 					return;
 				}
 
-				const matches = [...text.matchAll(CALLOUT_PATTERN)];
-				if (matches.length === 0) {
+				const bq = node as Blockquote;
+				const firstPara = bq.children[0];
+				if (!firstPara || firstPara.type !== "paragraph") {
 					return;
 				}
 
-				let result = "";
-				let lastEnd = 0;
-
-				for (const match of matches) {
-					const start = match.index ?? 0;
-					const calloutType = match[1]?.toLowerCase() ?? "note";
-					const calloutTitle = match[2] || calloutType;
-					const icon = CALLOUT_ICONS[calloutType] ?? "📝";
-
-					if (start > lastEnd) {
-						result += text.slice(lastEnd, start);
-					}
-
-					result += `<div class="callout callout-${calloutType}">\n<div class="callout-title">${icon} ${calloutTitle}</div>\n<div class="callout-content">\n`;
-					lastEnd = start + match[0].length;
-				}
-
-				if (lastEnd < text.length) {
-					result += text.slice(lastEnd);
-				}
-
-				node.value = result;
-			});
-
-			unistVisit(tree, "text", (node) => {
-				if (!node.value.includes("> ")) {
+				const firstText = firstPara.children.find(
+					(c): c is Text => c.type === "text",
+				);
+				if (!firstText) {
 					return;
 				}
 
-				node.value = node.value.replace(/\n> /g, "\n");
+				const lines = firstText.value.split("\n");
+				const headerLine = lines[0] ?? "";
+				const calloutMatch = CALLOUT_HEADER_PATTERN.exec(headerLine);
+				if (!calloutMatch) {
+					return;
+				}
+
+				const calloutType = calloutMatch[1]?.toLowerCase() ?? "note";
+				const calloutTitle = calloutMatch[2]?.trim() || calloutType;
+				const icon = CALLOUT_ICONS[calloutType] ?? "📝";
+
+				const remainingLines = lines.slice(1);
+				if (remainingLines.length === 0) {
+					bq.children.shift();
+				} else {
+					firstText.value = remainingLines.join("\n");
+				}
+
+				const openDiv: HTML = {
+					type: "html",
+					value: `<div class="callout callout-${escapeHtmlAttribute(calloutType)}">`,
+				};
+				const titleDiv: HTML = {
+					type: "html",
+					value: `<div class="callout-title">${icon} ${escapeHtmlText(calloutTitle)}</div>`,
+				};
+
+				const replacements: Root["children"] = [openDiv, titleDiv];
+
+				if (bq.children.length > 0) {
+					replacements.push(
+						{ type: "html", value: '<div class="callout-content">' },
+						...(bq.children as Root["children"]),
+						{ type: "html", value: "</div></div>" },
+					);
+				} else {
+					replacements.push({
+						type: "html",
+						value: '<div class="callout-content"></div></div>',
+					});
+				}
+
+				const parentNode = parent as Parent & { children: Root["children"] };
+				parentNode.children.splice(position, 1, ...replacements);
 			});
 		}
 
@@ -214,6 +250,7 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 						const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
 							currentPage,
 							index,
+							options: resolveOptions,
 						});
 
 						if (resolved.status === "ok" && resolved.targetPage) {
@@ -293,6 +330,7 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 				const resolved = resolveWikiLink(parsed, {
 					currentPage,
 					index,
+					options: resolveOptions,
 				});
 
 				if (resolved.status === "ok") {

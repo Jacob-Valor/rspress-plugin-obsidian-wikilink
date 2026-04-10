@@ -25,7 +25,17 @@ The plugin rewrites wikilinks during the Rspress remark pipeline. All features a
 ## Install
 
 ```bash
+# Bun (recommended)
 bun add rspress-plugin-obsidian-wikilink
+
+# npm
+npm install rspress-plugin-obsidian-wikilink
+
+# pnpm
+pnpm add rspress-plugin-obsidian-wikilink
+
+# yarn
+yarn add rspress-plugin-obsidian-wikilink
 ```
 
 Peer requirements:
@@ -59,7 +69,6 @@ pluginObsidianWikiLink({
   enableBacklinks: false,             // append backlinks panel (default: false)
   enableTransclusion: false,          // ![[Page]] → inline content (default: false)
   enableMediaEmbeds: false,           // ![[img.png]] → <img> (default: false)
-  wikilinkPattern: "/!?\\[\\[([^\\[\\]]+?)\\]\\]/g", // custom regex (default: Obsidian pattern)
 });
 ```
 
@@ -147,14 +156,6 @@ Output:
 
 Size parameter: `![[image.png|300x200]]` → `<img width="300" height="200" />`
 
-### `wikilinkPattern`
-
-Custom regex for matching wikilinks. Default: `/!?\[\[([^\[\]]+?)\]\]/g`
-
-```ts
-wikilinkPattern: "/\\[\\[([^\\[\\]]+?)\\]\\]/g"
-```
-
 ## Resolution rules
 
 Resolution order for `[[target]]`:
@@ -184,9 +185,16 @@ Supported heading formats: ATX, ATX with closing `#`, up to 3 leading spaces, se
 ## Development
 
 ```bash
+# Install dependencies (Bun recommended)
 bun install
+
+# Type checking
 bun run typecheck
+
+# Run tests
 bun test
+
+# Build docs
 bun run docs:build
 ```
 
@@ -213,6 +221,10 @@ Types:
 - `ResolvedWikiLink`
 - `ResolveContext`
 - And more — see `src/types.ts`
+
+## License
+
+MIT License — see [LICENSE](LICENSE) file for details.
 
 ## Status
 

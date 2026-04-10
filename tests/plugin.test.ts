@@ -368,6 +368,7 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
 					enableTagLinking: false,
 					enableCallouts: false,
 					enableBacklinks: false,
@@ -396,6 +397,7 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
 					enableTagLinking: false,
 					enableCallouts: false,
 					enableBacklinks: false,
@@ -422,6 +424,7 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
 					enableTagLinking: false,
 					enableCallouts: false,
 					enableBacklinks: false,
@@ -450,6 +453,7 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
 					enableTagLinking: false,
 					enableCallouts: false,
 					enableBacklinks: false,
@@ -482,6 +486,7 @@ describe("transclusion", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
 					enableTagLinking: false,
 					enableCallouts: false,
 					enableBacklinks: false,
@@ -525,5 +530,99 @@ describe("transclusion", () => {
 		const output = String(file);
 		expect(output).toContain('class="obsidian-transclusion"');
 		expect(output).toContain("Install steps");
+	});
+});
+
+describe("tag linking", () => {
+	test("rewrites tags into markdown links", async () => {
+		const processor = unified()
+			.use(remarkParse)
+			.use(remarkWikilink, {
+				getDocsRoot: () => fixtureRoot,
+				options: {
+					onBrokenLink: "error",
+					onAmbiguousLink: "error",
+					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
+					enableTagLinking: true,
+					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
+				},
+			})
+			.use(remarkStringify);
+
+		const file = await processor.process({
+			value: "See #tag and #other_tag.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toBe(
+			"See [#tag](/tags/tag) and [#other\\_tag](/tags/other_tag).\n",
+		);
+	});
+});
+
+describe("callouts", () => {
+	test("rewrites obsidian callouts into callout html", async () => {
+		const processor = unified()
+			.use(remarkParse)
+			.use(remarkWikilink, {
+				getDocsRoot: () => fixtureRoot,
+				options: {
+					onBrokenLink: "error",
+					onAmbiguousLink: "error",
+					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: false,
+					enableTagLinking: false,
+					enableCallouts: true,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
+				},
+			})
+			.use(remarkStringify);
+
+		const file = await processor.process({
+			value: "> [!tip] Pro Tip\n> Body text",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		const output = String(file);
+		expect(output).toContain('<div class="callout callout-tip">');
+		expect(output).toContain('<div class="callout-title">💡 Pro Tip</div>');
+		expect(output).toContain('<div class="callout-content">');
+		expect(output).toContain("Body text");
+		expect(output).toContain("</div></div>");
+	});
+});
+
+describe("case-insensitive lookup", () => {
+	test("forwards case-insensitive lookup option through remark resolution", async () => {
+		const processor = unified()
+			.use(remarkParse)
+			.use(remarkWikilink, {
+				getDocsRoot: () => strictFixtureRoot,
+				options: {
+					onBrokenLink: "error",
+					onAmbiguousLink: "error",
+					enableFuzzyMatching: false,
+					enableCaseInsensitiveLookup: true,
+					enableTagLinking: false,
+					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
+				},
+			})
+			.use(remarkStringify);
+
+		const file = await processor.process({
+			value: "Go to [[guide/casesensitive]].",
+			path: path.resolve(strictFixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toBe("Go to [CaseSensitive](/guide/CaseSensitive).\n");
 	});
 });

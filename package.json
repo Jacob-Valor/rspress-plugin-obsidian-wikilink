@@ -13,7 +13,8 @@
 	"license": "MIT",
 	"type": "module",
 	"files": [
-		"src"
+		"src",
+		"LICENSE"
 	],
 	"repository": {
 		"type": "git",
@@ -53,6 +54,7 @@
 		"@semantic-release/exec": "^6.0.3",
 		"@semantic-release/git": "^10.0.1",
 		"@semantic-release/github": "^11.0.6",
+		"@semantic-release/npm": "^11.0.2",
 		"@semantic-release/release-notes-generator": "^14.1.0",
 		"@types/bun": "latest",
 		"remark-parse": "^11.0.0",
