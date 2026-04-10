@@ -47,7 +47,9 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 
       for (const match of matches) {
         if (match.start > cursor) {
-          replacementNodes.push(createTextNode(node.value.slice(cursor, match.start)));
+          replacementNodes.push(
+            createTextNode(node.value.slice(cursor, match.start)),
+          );
         }
 
         const parsed = parseWikiLink(match.inner, match.fullMatch);
@@ -66,7 +68,13 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
             replacementNodes.push(createTextNode(parsed.raw));
           }
         } else {
-          reportDiagnostic(file, parsed.raw, resolved.message ?? "Unable to resolve wikilink.", resolved.status, options);
+          reportDiagnostic(
+            file,
+            parsed.raw,
+            resolved.message ?? "Unable to resolve wikilink.",
+            resolved.status,
+            options,
+          );
           replacementNodes.push(createTextNode(parsed.raw));
         }
 
@@ -77,13 +85,16 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
         replacementNodes.push(createTextNode(node.value.slice(cursor)));
       }
 
-      const parentWithChildren = parent as Parent & { children: PhrasingContent[] };
+      const parentWithChildren = parent as Parent & {
+        children: PhrasingContent[];
+      };
       parentWithChildren.children.splice(position, 1, ...replacementNodes);
     });
   };
 
 function getCurrentFilePath(file: VFile): string | undefined {
-  const pathFromFile = typeof file.path === "string" ? file.path : file.history.at(-1);
+  const pathFromFile =
+    typeof file.path === "string" ? file.path : file.history.at(-1);
   return pathFromFile ? normalizeFsPath(pathFromFile) : undefined;
 }
 
