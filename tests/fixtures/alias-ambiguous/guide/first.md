@@ -1,0 +1,6 @@
+---
+aliases:
+  - Shared Alias
+---
+
+# First
