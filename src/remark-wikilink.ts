@@ -11,6 +11,22 @@ import type {
 } from "./types.ts";
 import { normalizeFsPath } from "./utils.ts";
 
+const TAG_PATTERN = /#([a-zA-Z0-9_-]+)/g;
+const CALLOUT_PATTERN = /^> \[!(\w+)\](?:[-+]?\s*(.*))?$/;
+
+const CALLOUT_ICONS: Record<string, string> = {
+	note: "📝",
+	tip: "💡",
+	warning: "⚠️",
+	danger: "🚨",
+	info: "ℹ️",
+	success: "✅",
+	question: "❓",
+	bug: "🐛",
+	example: "📋",
+	quote: "📜",
+};
+
 const SKIP_PARENT_TYPES = new Set([
 	"link",
 	"linkReference",
@@ -38,6 +54,95 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 		const currentPage = index.byAbsolutePath.get(currentFilePath);
 		if (!currentPage) {
 			return;
+		}
+
+		if (options.enableTagLinking) {
+			unistVisit(tree, "text", (node, position, parent) => {
+				if (!parent || typeof position !== "number") {
+					return;
+				}
+
+				if (SKIP_PARENT_TYPES.has(parent.type)) {
+					return;
+				}
+
+				const text = node.value;
+				if (!text.includes("#")) {
+					return;
+				}
+
+				const tags = [...text.matchAll(TAG_PATTERN)];
+				if (tags.length === 0) {
+					return;
+				}
+
+				let result = "";
+				let lastEnd = 0;
+
+				for (const tag of tags) {
+					const start = tag.index ?? 0;
+					const fullMatch = tag[0];
+					const tagName = tag[1];
+
+					if (start > lastEnd) {
+						result += text.slice(lastEnd, start);
+					}
+
+					result += `[${fullMatch}](/tags/${tagName})`;
+					lastEnd = start + fullMatch.length;
+				}
+
+				if (lastEnd < text.length) {
+					result += text.slice(lastEnd);
+				}
+
+				node.value = result;
+			});
+		}
+
+		if (options.enableCallouts) {
+			unistVisit(tree, "text", (node) => {
+				const text = node.value;
+				if (!text.includes("[!")) {
+					return;
+				}
+
+				const matches = [...text.matchAll(CALLOUT_PATTERN)];
+				if (matches.length === 0) {
+					return;
+				}
+
+				let result = "";
+				let lastEnd = 0;
+
+				for (const match of matches) {
+					const start = match.index ?? 0;
+					const calloutType = match[1]?.toLowerCase() ?? "note";
+					const calloutTitle = match[2] || calloutType;
+					const icon = CALLOUT_ICONS[calloutType] ?? "📝";
+
+					if (start > lastEnd) {
+						result += text.slice(lastEnd, start);
+					}
+
+					result += `<div class="callout callout-${calloutType}">\n<div class="callout-title">${icon} ${calloutTitle}</div>\n<div class="callout-content">\n`;
+					lastEnd = start + match[0].length;
+				}
+
+				if (lastEnd < text.length) {
+					result += text.slice(lastEnd);
+				}
+
+				node.value = result;
+			});
+
+			unistVisit(tree, "text", (node) => {
+				if (!node.value.includes("> ")) {
+					return;
+				}
+
+				node.value = node.value.replace(/\n> /g, "\n");
+			});
 		}
 
 		unistVisit(tree, "text", (node, position, parent) => {
@@ -68,9 +173,6 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 				const resolved = resolveWikiLink(parsed, {
 					currentPage,
 					index,
-					options: {
-						enableFuzzyMatching: options.enableFuzzyMatching,
-					},
 				});
 
 				if (resolved.status === "ok") {

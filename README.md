@@ -46,6 +46,10 @@ pluginObsidianWikiLink({
   onBrokenLink: "error", // default: "error"
   onAmbiguousLink: "error", // default: "error"
   enableFuzzyMatching: false, // default: false
+  enableCaseInsensitiveLookup: false, // default: false
+  wikilinkPattern: "/!?\\[\\[([^\\[\\]]+?)\\]\\]/g", // custom regex pattern
+  enableTagLinking: false, // default: false
+  enableCallouts: false, // default: false
 });
 ```
 
@@ -63,6 +67,48 @@ pluginObsidianWikiLink({
 
 - `false` — only exact path, basename, title, and alias lookups are allowed
 - `true` — enables case-insensitive and shortest-suffix fallback path matching after strict lookups fail
+
+### `enableTagLinking`
+
+- `false` — tags are not converted to links (default)
+- `true` — converts `#tag` to `[#tag](/tags/tag)`
+
+### `enableCallouts`
+
+- `false` — callouts are not transformed (default)
+- `true` — transforms Obsidian callouts to styled HTML divs
+
+Supported callout types: `note`, `tip`, `warning`, `danger`, `info`, `success`, `question`, `bug`, `example`, `quote`
+
+Example:
+```markdown
+> [!tip] Pro Tip
+> This is a callout
+```
+
+Becomes:
+```html
+<div class="callout callout-tip">
+<div class="callout-title">💡 Pro Tip</div>
+<div class="callout-content">
+This is a callout
+</div>
+</div>
+```
+
+### `enableCaseInsensitiveLookup`
+
+- `false` — case-sensitive path/basename lookups (default)
+- `true` — fall back to case-insensitive matching when exact case fails
+
+### `wikilinkPattern`
+
+Custom regex pattern for matching wikilinks. Default: `/!?\\[\\[([^\\[\\]]+?)\\]\\]/g`
+
+Example for double-bracket only:
+```ts
+wikilinkPattern: "/\\[\\[([^\\[\\]]+?)\\]\\]/g"
+```
 
 ## Resolution rules
 
@@ -92,7 +138,7 @@ Supported heading resolution includes:
 - setext headings
 - explicit IDs like `{#custom-anchor}`
 
-## Out of scope for v0.0.1
+## Out of scope for v0.1.0
 
 - transclusion
 - media-specific embed rendering (`![[image.png|100x145]]`, PDFs, audio)
@@ -118,6 +164,16 @@ The package exports:
 - `findWikilinkMatches`
 - `resolveWikiLink`
 
+And types:
+
+- `RspressPluginObsidianWikiLinkOptions`
+- `ParsedWikiLink`
+- `ContentPage`
+- `ContentIndex`
+- `ResolvedWikiLink`
+- `ResolveContext`
+- And more — see `src/types.ts`
+
 ## Status
 
-Current scope is a small, strict v0.0.1 focused on reliable wikilink rewriting for Rspress docs.
+Current scope is v0.1.0 focused on reliable wikilink rewriting for Rspress docs.

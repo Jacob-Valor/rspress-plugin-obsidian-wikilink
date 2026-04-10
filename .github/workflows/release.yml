@@ -24,20 +24,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'  # semantic-release v25+ requires Node 22.14+ (v24.10.0+ for v24 range)
-          cache: 'npm'
+          bun-version: latest
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Verify dependency signatures
-        run: npm audit signatures
+        run: bun install
 
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # NPM_TOKEN not needed with OIDC trusted publishing
-        run: npm run release
+        run: bun run release

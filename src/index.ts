@@ -20,6 +20,8 @@ function normalizePluginOptions(
 		onBrokenLink: options.onBrokenLink ?? "error",
 		onAmbiguousLink: options.onAmbiguousLink ?? "error",
 		enableFuzzyMatching: options.enableFuzzyMatching ?? false,
+		enableTagLinking: options.enableTagLinking ?? false,
+		enableCallouts: options.enableCallouts ?? false,
 	};
 }
 

@@ -155,7 +155,7 @@ function isRoutableRelativePath(relativePath: string): boolean {
 }
 
 async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
-	const markdown = await Bun.file(file.absolutePath).text();
+	const markdown = await fs.promises.readFile(file.absolutePath, "utf-8");
 	const routePath = deriveRoutePath(file.relativePath);
 	const pathKey = normalizePathKey(file.relativePath);
 	const baseName = path.basename(pathKey);

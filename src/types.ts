@@ -4,12 +4,16 @@ export interface RspressPluginObsidianWikiLinkOptions {
 	onBrokenLink?: DiagnosticMode;
 	onAmbiguousLink?: DiagnosticMode;
 	enableFuzzyMatching?: boolean;
+	enableTagLinking?: boolean;
+	enableCallouts?: boolean;
 }
 
 export interface NormalizedPluginOptions {
 	onBrokenLink: DiagnosticMode;
 	onAmbiguousLink: DiagnosticMode;
 	enableFuzzyMatching: boolean;
+	enableTagLinking: boolean;
+	enableCallouts: boolean;
 }
 
 export interface WikiSubpath {

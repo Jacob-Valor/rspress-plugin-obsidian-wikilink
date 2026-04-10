@@ -368,6 +368,8 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableTagLinking: false,
+					enableCallouts: false,
 				},
 			})
 			.use(remarkStringify);
@@ -391,6 +393,8 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableTagLinking: false,
+					enableCallouts: false,
 				},
 			})
 			.use(remarkStringify);
@@ -412,6 +416,8 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableTagLinking: false,
+					enableCallouts: false,
 				},
 			})
 			.use(remarkStringify);
@@ -435,6 +441,8 @@ describe("remarkWikilink", () => {
 					onBrokenLink: "error",
 					onAmbiguousLink: "error",
 					enableFuzzyMatching: false,
+					enableTagLinking: false,
+					enableCallouts: false,
 				},
 			})
 			.use(remarkStringify);
