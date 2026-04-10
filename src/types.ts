@@ -6,6 +6,9 @@ export interface RspressPluginObsidianWikiLinkOptions {
 	enableFuzzyMatching?: boolean;
 	enableTagLinking?: boolean;
 	enableCallouts?: boolean;
+	enableBacklinks?: boolean;
+	enableTransclusion?: boolean;
+	enableMediaEmbeds?: boolean;
 }
 
 export interface NormalizedPluginOptions {
@@ -14,6 +17,9 @@ export interface NormalizedPluginOptions {
 	enableFuzzyMatching: boolean;
 	enableTagLinking: boolean;
 	enableCallouts: boolean;
+	enableBacklinks: boolean;
+	enableTransclusion: boolean;
+	enableMediaEmbeds: boolean;
 }
 
 export interface WikiSubpath {

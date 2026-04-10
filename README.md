@@ -1,19 +1,26 @@
 # rspress-plugin-obsidian-wikilink
 
-Obsidian-style wikilinks for Rspress.
+Obsidian-style wikilinks for Rspress. Write your docs in Obsidian, publish with Rspress.
 
 ## Features
 
-- `[[Page]]`
-- `[[Page|Alias]]`
-- `[[Page#Heading]]`
-- `[[Page#Heading|Alias]]`
-- `[[#Heading]]` for current-page anchors
-- `[[Page#^block]]` for Obsidian-style block references
-- `![[Page]]`, `![[Page#Heading]]`, and `![[Page#^block]]` embed syntax
-- frontmatter `title` and `aliases` lookup
+| Syntax | Description |
+|--------|-------------|
+| `[[Page]]` | Link to another page |
+| `[[Page\|Alias]]` | Link with custom display text |
+| `[[Page#Heading]]` | Link to a specific heading |
+| `[[Page#Heading\|Alias]]` | Link to heading with alias |
+| `[[#Heading]]` | Link to heading in current page |
+| `[[Page#^block]]` | Block reference |
+| `![[Page]]` | Transclude full page content |
+| `![[Page#Heading]]` | Transclude a specific section |
+| `![[Page#^block]]` | Transclude a specific block |
+| `![[image.png\|300x200]]` | Embed media with optional size |
+| `#tag` | Tag links (opt-in) |
+| `> [!note]` | Callouts (opt-in) |
+| Backlinks panel | Auto-generated per page (opt-in) |
 
-The plugin rewrites supported wikilinks into markdown links during the Rspress remark pipeline and rewrites supported embed syntax into HTML anchors with an `obsidian-embed` marker class.
+The plugin rewrites wikilinks during the Rspress remark pipeline. All features are opt-in via configuration.
 
 ## Install
 
@@ -43,106 +50,136 @@ export default defineConfig({
 
 ```ts
 pluginObsidianWikiLink({
-  onBrokenLink: "error", // default: "error"
-  onAmbiguousLink: "error", // default: "error"
-  enableFuzzyMatching: false, // default: false
-  enableCaseInsensitiveLookup: false, // default: false
-  wikilinkPattern: "/!?\\[\\[([^\\[\\]]+?)\\]\\]/g", // custom regex pattern
-  enableTagLinking: false, // default: false
-  enableCallouts: false, // default: false
+  onBrokenLink: "error",              // "error" | "warn" (default: "error")
+  onAmbiguousLink: "error",           // "error" | "warn" (default: "error")
+  enableFuzzyMatching: false,         // shortest-suffix fallback (default: false)
+  enableCaseInsensitiveLookup: false, // case-insensitive path lookup (default: false)
+  enableTagLinking: false,            // #tag → /tags/tag (default: false)
+  enableCallouts: false,              // > [!note] → styled divs (default: false)
+  enableBacklinks: false,             // append backlinks panel (default: false)
+  enableTransclusion: false,          // ![[Page]] → inline content (default: false)
+  enableMediaEmbeds: false,           // ![[img.png]] → <img> (default: false)
+  wikilinkPattern: "/!?\\[\\[([^\\[\\]]+?)\\]\\]/g", // custom regex (default: Obsidian pattern)
 });
 ```
 
 ### `onBrokenLink`
 
-- `"error"` — fail the file on missing page or missing heading
+- `"error"` — fail the build on missing page or heading
 - `"warn"` — emit a warning and leave the original wikilink text in place
 
 ### `onAmbiguousLink`
 
-- `"error"` — fail the file when a basename matches multiple pages
+- `"error"` — fail the build when a basename matches multiple pages
 - `"warn"` — emit a warning and leave the original wikilink text in place
 
 ### `enableFuzzyMatching`
 
-- `false` — only exact path, basename, title, and alias lookups are allowed
-- `true` — enables case-insensitive and shortest-suffix fallback path matching after strict lookups fail
-
-### `enableTagLinking`
-
-- `false` — tags are not converted to links (default)
-- `true` — converts `#tag` to `[#tag](/tags/tag)`
-
-### `enableCallouts`
-
-- `false` — callouts are not transformed (default)
-- `true` — transforms Obsidian callouts to styled HTML divs
-
-Supported callout types: `note`, `tip`, `warning`, `danger`, `info`, `success`, `question`, `bug`, `example`, `quote`
-
-Example:
-```markdown
-> [!tip] Pro Tip
-> This is a callout
-```
-
-Becomes:
-```html
-<div class="callout callout-tip">
-<div class="callout-title">💡 Pro Tip</div>
-<div class="callout-content">
-This is a callout
-</div>
-</div>
-```
+- `false` — only exact path, basename, title, and alias lookups
+- `true` — enables case-insensitive and shortest-suffix fallback matching
 
 ### `enableCaseInsensitiveLookup`
 
 - `false` — case-sensitive path/basename lookups (default)
 - `true` — fall back to case-insensitive matching when exact case fails
 
+### `enableTagLinking`
+
+- `false` — tags are left as-is (default)
+- `true` — converts `#tag` to `[#tag](/tags/tag)` (skips code blocks)
+
+### `enableCallouts`
+
+- `false` — callouts are left as blockquotes (default)
+- `true` — transforms Obsidian callouts to styled HTML divs
+
+Supported types: `note`, `tip`, `warning`, `danger`, `info`, `success`, `question`, `bug`, `example`, `quote`
+
+```markdown
+> [!tip] Pro Tip
+> This is a callout
+```
+
+Output:
+```html
+<div class="callout callout-tip">
+  <div class="callout-title">💡 Pro Tip</div>
+  <div class="callout-content">This is a callout</div>
+</div>
+```
+
+### `enableBacklinks`
+
+- `false` — no backlinks (default)
+- `true` — appends a `<div class="obsidian-backlinks">` panel listing all pages that link to the current page
+
+### `enableTransclusion`
+
+- `false` — `![[Page]]` is treated as a regular embed anchor (default)
+- `true` — inlines the target file's content at the embed location
+
+Supports section and block scoping:
+
+| Syntax | Behavior |
+|--------|----------|
+| `![[Page]]` | Inlines full page content (frontmatter stripped) |
+| `![[Page#Heading]]` | Inlines only the content under that heading |
+| `![[Page#^block]]` | Inlines only the paragraph annotated with `^block` |
+
+Output:
+```html
+<div class="obsidian-transclusion" data-src="/page">
+  ...inlined content...
+</div>
+```
+
+### `enableMediaEmbeds`
+
+- `false` — `![[file]]` is treated as a regular embed anchor (default)
+- `true` — renders media files as native HTML elements
+
+| Extension | Output |
+|-----------|--------|
+| `png`, `jpg`, `jpeg`, `gif`, `svg`, `webp`, `avif` | `<img>` |
+| `mp3`, `wav`, `ogg`, `m4a`, `flac` | `<audio controls>` |
+| `mp4`, `webm`, `mov`, `mkv` | `<video controls>` |
+| `pdf` | `<iframe>` |
+
+Size parameter: `![[image.png|300x200]]` → `<img width="300" height="200" />`
+
 ### `wikilinkPattern`
 
-Custom regex pattern for matching wikilinks. Default: `/!?\\[\\[([^\\[\\]]+?)\\]\\]/g`
+Custom regex for matching wikilinks. Default: `/!?\[\[([^\[\]]+?)\]\]/g`
 
-Example for double-bracket only:
 ```ts
 wikilinkPattern: "/\\[\\[([^\\[\\]]+?)\\]\\]/g"
 ```
 
 ## Resolution rules
 
-Current resolution order:
+Resolution order for `[[target]]`:
 
-1. Try an exact path match first
-2. Fall back to an exact basename match only when it is unique
-3. Fall back to a unique frontmatter `title` or `aliases` match
-4. Optionally try fuzzy path matching when `enableFuzzyMatching` is enabled
-5. Reject ambiguous or missing targets by default
+1. Exact path match
+2. Unique basename match
+3. Unique frontmatter `title` match
+4. Unique frontmatter `aliases` match
+5. Fuzzy matching (when `enableFuzzyMatching` is enabled)
+6. Case-insensitive fallback (when `enableCaseInsensitiveLookup` is enabled)
+7. Rejected as broken or ambiguous
 
 Examples:
 
-- `[[guide/getting-started]]` → exact path match
-- `[[getting-started]]` → basename match only if exactly one page has that basename
-- `[[Onboarding Guide]]` → frontmatter `title` match when unique
-- `[[Start Here]]` → frontmatter `aliases` match when unique
-- `[[#Install]]` → current page heading lookup
-- `[[guide/getting-started#^install-block]]` → block reference lookup
-- `![[guide/getting-started#Install]]` → embed syntax rewritten to an HTML anchor
+| Wikilink | Resolves via |
+|----------|-------------|
+| `[[guide/getting-started]]` | Exact path |
+| `[[getting-started]]` | Basename (unique) |
+| `[[Onboarding Guide]]` | Frontmatter `title` |
+| `[[Start Here]]` | Frontmatter `aliases` |
+| `[[#Install]]` | Current page heading |
+| `[[guide/getting-started#^install-block]]` | Block reference |
+| `![[guide/getting-started#Install]]` | Section transclusion |
 
-Supported heading resolution includes:
-
-- standard ATX headings
-- ATX headings with closing `#`
-- headings with up to 3 leading spaces
-- setext headings
-- explicit IDs like `{#custom-anchor}`
-
-## Out of scope for v0.1.0
-
-- transclusion
-- media-specific embed rendering (`![[image.png|100x145]]`, PDFs, audio)
-- multi-hop fuzzy heuristics beyond the built-in optional shortest-suffix path fallback
+Supported heading formats: ATX, ATX with closing `#`, up to 3 leading spaces, setext, explicit IDs `{#custom-anchor}`
 
 ## Development
 
@@ -155,18 +192,21 @@ bun run docs:build
 
 ## Package exports
 
-The package exports:
+Functions:
 
 - `pluginObsidianWikiLink`
 - `buildContentIndex`
 - `getCachedContentIndex`
+- `buildBacklinksIndex`
+- `renderBacklinksHtml`
 - `parseWikiLink`
 - `findWikilinkMatches`
 - `resolveWikiLink`
 
-And types:
+Types:
 
 - `RspressPluginObsidianWikiLinkOptions`
+- `NormalizedPluginOptions`
 - `ParsedWikiLink`
 - `ContentPage`
 - `ContentIndex`
@@ -176,4 +216,4 @@ And types:
 
 ## Status
 
-Current scope is v0.1.0 focused on reliable wikilink rewriting for Rspress docs.
+v0.1.1 — full Obsidian markdown feature coverage for static Rspress docs.

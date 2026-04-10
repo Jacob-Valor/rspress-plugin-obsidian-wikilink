@@ -1,23 +1,28 @@
 ---
-description: Obsidian-style wikilinks for Rspress documentation. Supports [[Page]], [[Page|Alias]], [[Page#Heading]], block references, and embed syntax.
+description: Obsidian-style wikilinks for Rspress. Supports wikilinks, transclusion, media embeds, callouts, backlinks, tags, and block references.
 ---
 
 # rspress-plugin-obsidian-wikilink
 
-Rspress plugin that transforms Obsidian-style wikilinks into standard markdown links during the remark pipeline. Write your docs in Obsidian flavor, publish with Rspress.
+Rspress plugin that brings full Obsidian markdown support to your documentation site. Write in Obsidian, publish with Rspress.
 
 ## Features
 
 | Syntax | Description |
 |--------|-------------|
 | `[[Page]]` | Link to another page |
-| `[[Page|Alias]]` | Link with custom display text |
+| `[[Page\|Alias]]` | Link with custom display text |
 | `[[Page#Heading]]` | Link to a specific heading |
-| `[[Page#Heading|Alias]]` | Link to heading with alias |
+| `[[Page#Heading\|Alias]]` | Link to heading with alias |
 | `[[#Heading]]` | Link to heading in current page |
-| `[[Page#^block]]` | Block reference (Obsidian-style) |
-| `![[Page]]` | Embed another page |
-| `#tag` | Tag links (when enabled) |
+| `[[Page#^block]]` | Block reference |
+| `![[Page]]` | Transclude full page content |
+| `![[Page#Heading]]` | Transclude a specific section |
+| `![[Page#^block]]` | Transclude a specific block |
+| `![[image.png\|300x200]]` | Embed media with optional size |
+| `#tag` | Tag links (opt-in) |
+| `> [!note]` | Callouts (opt-in) |
+| Backlinks panel | Auto-generated per page (opt-in) |
 
 ## Quick Start
 
@@ -36,22 +41,33 @@ import { pluginObsidianWikiLink } from "rspress-plugin-obsidian-wikilink";
 
 export default defineConfig({
   root: path.join(__dirname, "docs"),
-  plugins: [pluginObsidianWikiLink()],
+  plugins: [
+    pluginObsidianWikiLink({
+      enableCallouts: true,
+      enableTagLinking: true,
+      enableBacklinks: true,
+      enableTransclusion: true,
+      enableMediaEmbeds: true,
+    }),
+  ],
 });
 ```
 
-Start writing with wikilinks:
+Start writing with Obsidian syntax:
 
 ```markdown
-Check out [[getting-started]] to begin.
+See [[getting-started]] to begin.
 
-See [[advanced#Configuration]] for options.
+![[shared/intro]]
 
-![[embedded-page]]
+> [!tip] Did you know?
+> You can use all Obsidian wikilink syntax here.
+
+Related: #tutorial #docs
 ```
 
 ## Next Steps
 
 - [[guide/getting-started|Getting Started]] — Full installation and setup guide
-- [[guide/advanced|Advanced Usage]] — Configuration, resolution rules, debugging
-- [[guide/api|API Reference]] — Programmatic usage and type definitions
+- [[guide/advanced|Advanced Usage]] — All configuration options
+- [[guide/api|API Reference]] — Programmatic usage and types

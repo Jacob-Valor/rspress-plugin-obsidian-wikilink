@@ -9,6 +9,7 @@ import type {
 } from "./types.ts";
 
 export { buildContentIndex, getCachedContentIndex } from "./content-index.ts";
+export { buildBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
 export { findWikilinkMatches, parseWikiLink } from "./parse-wikilink.ts";
 export { resolveWikiLink } from "./resolve-wikilink.ts";
 export type { RspressPluginObsidianWikiLinkOptions } from "./types.ts";
@@ -22,6 +23,9 @@ function normalizePluginOptions(
 		enableFuzzyMatching: options.enableFuzzyMatching ?? false,
 		enableTagLinking: options.enableTagLinking ?? false,
 		enableCallouts: options.enableCallouts ?? false,
+		enableBacklinks: options.enableBacklinks ?? false,
+		enableTransclusion: options.enableTransclusion ?? false,
+		enableMediaEmbeds: options.enableMediaEmbeds ?? false,
 	};
 }
 

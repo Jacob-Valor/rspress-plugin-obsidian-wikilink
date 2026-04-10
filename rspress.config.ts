@@ -10,6 +10,9 @@ export default defineConfig({
 		pluginObsidianWikiLink({
 			enableTagLinking: true,
 			enableCallouts: true,
+			enableBacklinks: true,
+			enableTransclusion: true,
+			enableMediaEmbeds: true,
 		}),
 	],
 });

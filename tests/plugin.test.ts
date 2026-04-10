@@ -370,6 +370,9 @@ describe("remarkWikilink", () => {
 					enableFuzzyMatching: false,
 					enableTagLinking: false,
 					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
 				},
 			})
 			.use(remarkStringify);
@@ -395,6 +398,9 @@ describe("remarkWikilink", () => {
 					enableFuzzyMatching: false,
 					enableTagLinking: false,
 					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
 				},
 			})
 			.use(remarkStringify);
@@ -418,6 +424,9 @@ describe("remarkWikilink", () => {
 					enableFuzzyMatching: false,
 					enableTagLinking: false,
 					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
 				},
 			})
 			.use(remarkStringify);
@@ -443,6 +452,9 @@ describe("remarkWikilink", () => {
 					enableFuzzyMatching: false,
 					enableTagLinking: false,
 					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: false,
+					enableMediaEmbeds: false,
 				},
 			})
 			.use(remarkStringify);
@@ -455,5 +467,63 @@ describe("remarkWikilink", () => {
 		expect(String(file)).toBe(
 			'<a class="obsidian-embed" data-obsidian-embed="true" href="/guide/getting-started#install">Install guide</a>\n',
 		);
+	});
+});
+
+describe("transclusion", () => {
+	function makeProcessor(
+		opts: Partial<Parameters<typeof remarkWikilink>[0]["options"]> = {},
+	) {
+		return unified()
+			.use(remarkParse)
+			.use(remarkWikilink, {
+				getDocsRoot: () => fixtureRoot,
+				options: {
+					onBrokenLink: "error",
+					onAmbiguousLink: "error",
+					enableFuzzyMatching: false,
+					enableTagLinking: false,
+					enableCallouts: false,
+					enableBacklinks: false,
+					enableTransclusion: true,
+					enableMediaEmbeds: false,
+					...opts,
+				},
+			})
+			.use(remarkStringify);
+	}
+
+	test("transclubes full page content", async () => {
+		const processor = makeProcessor();
+		const file = await processor.process({
+			value: "![[guide/getting-started]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="obsidian-transclusion"');
+		expect(output).toContain("Getting Started");
+	});
+
+	test("transclubes heading section only", async () => {
+		const processor = makeProcessor();
+		const file = await processor.process({
+			value: "![[guide/getting-started#Install]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="obsidian-transclusion"');
+		expect(output).toContain("Install");
+		expect(output).not.toContain("Getting Started\n");
+	});
+
+	test("transclubes block reference only", async () => {
+		const processor = makeProcessor();
+		const file = await processor.process({
+			value: "![[guide/getting-started#^install-block]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="obsidian-transclusion"');
+		expect(output).toContain("Install steps");
 	});
 });

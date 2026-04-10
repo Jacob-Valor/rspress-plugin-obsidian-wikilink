@@ -1,22 +1,23 @@
 ---
-description: Advanced configuration options for rspress-plugin-obsidian-wikilink. Learn about onBrokenLink, onAmbiguousLink, enableFuzzyMatching, heading resolution, and debugging.
+description: Complete configuration reference for rspress-plugin-obsidian-wikilink. Covers all options including transclusion, media embeds, callouts, backlinks, tag linking, and link resolution rules.
 ---
 
 # Advanced
 
-This guide covers advanced configuration options and use cases.
-
-## Configuration Options
-
-The plugin accepts an options object to customize its behavior:
+## All Configuration Options
 
 ```ts
-import { pluginObsidianWikiLink } from "rspress-plugin-obsidian-wikilink";
-
 pluginObsidianWikiLink({
-  onBrokenLink: "error",
-  onAmbiguousLink: "error",
-  enableFuzzyMatching: false,
+  onBrokenLink: "error",              // "error" | "warn"
+  onAmbiguousLink: "error",           // "error" | "warn"
+  enableFuzzyMatching: false,         // shortest-suffix path fallback
+  enableCaseInsensitiveLookup: false, // case-insensitive path lookup
+  enableTagLinking: false,            // #tag → /tags/tag
+  enableCallouts: false,              // > [!note] → styled divs
+  enableBacklinks: false,             // append backlinks panel
+  enableTransclusion: false,          // ![[Page]] → inline content
+  enableMediaEmbeds: false,           // ![[img.png]] → <img>
+  wikilinkPattern: "/!?\\[\\[([^\\[\\]]+?)\\]\\]/g",
 });
 ```
 
@@ -36,72 +37,112 @@ Controls how the plugin handles ambiguous links (multiple pages with the same ba
 
 ### `enableFuzzyMatching`
 
-Enables flexible path matching:
-
 - `false` (default) — Only exact path, basename, title, and alias lookups
 - `true` — Enables case-insensitive and shortest-suffix fallback matching
 
+### `enableCaseInsensitiveLookup`
+
+- `false` (default) — Case-sensitive path/basename lookups
+- `true` — Falls back to case-insensitive matching when exact case fails
+
 ### `enableTagLinking`
 
-Enables automatic conversion of Obsidian-style tags to links:
+- `false` (default) — Tags are left as-is in the output
+- `true` — Converts `#tag` to `[#tag](/tags/tag)`. Skips tags inside code blocks.
 
-- `false` (default) — Tags are left as-is
-- `true` — Converts `#tag` to `[#tag](/tags/tag)`
+### `enableCallouts`
 
-Example:
+- `false` (default) — Obsidian callouts remain as blockquotes
+- `true` — Transforms callouts to styled HTML divs
 
-```ts
-pluginObsidianWikiLink({
-  enableTagLinking: true,
-});
+Supported types: `note`, `tip`, `warning`, `danger`, `info`, `success`, `question`, `bug`, `example`, `quote`
+
+```markdown
+> [!warning] Watch out
+> This will be transformed
 ```
 
-With this enabled, `#my-tag` in your markdown becomes `[#my-tag](/tags/my-tag)` in the output.
+Output:
+```html
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ Watch out</div>
+  <div class="callout-content">This will be transformed</div>
+</div>
+```
+
+### `enableBacklinks`
+
+- `false` (default) — No backlinks appended
+- `true` — Scans all pages for incoming links and appends a `<div class="obsidian-backlinks">` panel at the bottom of each page
+
+### `enableTransclusion`
+
+- `false` (default) — `![[Page]]` is rewritten to an embed anchor
+- `true` — Inlines the referenced file's content at the embed location
+
+| Syntax | Result |
+|--------|--------|
+| `![[Page]]` | Full file content (frontmatter stripped) |
+| `![[Page#Heading]]` | Only the section under that heading |
+| `![[Page#^block]]` | Only the paragraph annotated with `^block` |
+
+Output wraps content in:
+```html
+<div class="obsidian-transclusion" data-src="/page">
+  ...inlined content...
+</div>
+```
+
+### `enableMediaEmbeds`
+
+- `false` (default) — `![[file]]` is rewritten to an embed anchor
+- `true` — Renders media files as native HTML elements
+
+| Extension | Output element |
+|-----------|---------------|
+| `png`, `jpg`, `jpeg`, `gif`, `svg`, `webp`, `avif` | `<img loading="lazy">` |
+| `mp3`, `wav`, `ogg`, `m4a`, `flac` | `<audio controls>` |
+| `mp4`, `webm`, `mov`, `mkv` | `<video controls>` |
+| `pdf` | `<iframe>` |
+
+Size parameter: `![[image.png|300x200]]` → `width="300" height="200"`. Width-only: `![[image.png|300]]` → `width="300"`.
+
+### `wikilinkPattern`
+
+Custom regex for matching wikilinks. Must include a capture group for the inner content.
+
+Default: `/!?\[\[([^\[\]]+?)\]\]/g`
+
+Example (disable embed prefix):
+```ts
+wikilinkPattern: "/\\[\\[([^\\[\\]]+?)\\]\\]/g"
+```
 
 ## Link Resolution
 
-The plugin resolves wikilinks in this order:
+Resolution order for `[[target]]`:
 
 1. **Exact path** — `[[guide/getting-started]]`
-2. **Unique basename** — `[[getting-started]]` (if only one page matches)
-3. **Frontmatter title** — `[[Onboarding Guide]]` (if unique)
-4. **Frontmatter aliases** — `[[Start Here]]` (if unique)
-5. **Fuzzy matching** — (when enabled) case-insensitive fallback
-6. **Reject** — Ambiguous or missing targets fail by default
+2. **Unique basename** — `[[getting-started]]` (one page matches)
+3. **Frontmatter `title`** — `[[Onboarding Guide]]` (unique match)
+4. **Frontmatter `aliases`** — `[[Start Here]]` (unique match)
+5. **Fuzzy matching** — (when `enableFuzzyMatching` is on) case-insensitive, shortest-suffix
+6. **Case-insensitive** — (when `enableCaseInsensitiveLookup` is on)
+7. **Rejected** — broken or ambiguous
 
 ## Heading Resolution
 
-Supported heading formats:
+Supported heading formats in target files:
 
-- ATX headings: `# Heading`
+- Standard ATX: `# Heading`
 - ATX with closing: `# Heading ##`
-- Indented: `   # Heading` (up to 3 spaces)
+- Up to 3 leading spaces: `   # Heading`
 - Setext: `Heading\n=======`
-- Custom IDs: `{#custom-anchor}`
-
-## Block References
-
-Obsidian-style block references using `^`:
-
-```markdown
-[[guide/getting-started#^install-step]]
-```
-
-This links to a block annotated with `^install-step` in the target page.
-
-## Embed Syntax
-
-Embed entire pages or sections:
-
-- `![[Page]]` — Embed entire page
-- `![[Page#Heading]]` — Embed specific section
-- `![[Page#^block]]` — Embed block reference
-
-Embeds are rewritten to HTML anchors with `obsidian-embed` class.
+- Explicit IDs: `## Heading {#custom-anchor}`
 
 ## Debugging
 
-To debug link resolution, add logging to your config:
+Use `"warn"` to see which links can't be resolved without failing the build:
 
 ```ts
 pluginObsidianWikiLink({
@@ -110,9 +151,6 @@ pluginObsidianWikiLink({
 });
 ```
 
-This will emit warnings for broken or ambiguous links instead of failing the build.
-
 ## Next Steps
 
-- Check the [[api|API Reference]] for programmatic access
-- See the main README for resolution rules details
+- See the [[api|API Reference]] for programmatic usage
