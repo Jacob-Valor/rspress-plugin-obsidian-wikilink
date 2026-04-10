@@ -1,73 +1,35 @@
 ---
-description: Obsidian-style wikilinks for Rspress. Supports wikilinks, transclusion, media embeds, callouts, backlinks, tags, and block references.
+pageType: home
+description: Obsidian-style wikilinks for Rspress. Write your docs in Obsidian, publish with Rspress.
+hero:
+  name: rspress-plugin-obsidian-wikilink
+  text: Obsidian Wikilinks for Rspress
+  tagline: Write your docs in Obsidian flavor, publish with Rspress. Full support for wikilinks, transclusion, media embeds, callouts, and more.
+  actions:
+    - theme: brand
+      text: Get Started
+      link: /guide/getting-started
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/jacob-8/rspress-plugin-obsidian-wikilink
+features:
+  - title: Wikilinks
+    details: Support for [[Page]], [[Page|Label]], [[Page#Heading]], and block references.
+    icon: 🔗
+  - title: Transclusion
+    details: Inline page content with ![[Page]], sections with ![[Page#Heading]], and blocks with ![[Page#^block]].
+    icon: 📄
+  - title: Media Embeds
+    details: Embed images, videos, audio, and PDFs with optional size parameters.
+    icon: 🖼️
+  - title: Callouts
+    details: Transform > [!note] syntax into styled callout components.
+    icon: 💡
+  - title: Tag Linking
+    details: "Convert #tags into proper links to tag pages."
+    icon: 🏷️
+  - title: Backlinks
+    details: Auto-generate backlinks panel showing which pages link to the current page.
+    icon: 🔙
 ---
 
-# rspress-plugin-obsidian-wikilink
-
-Rspress plugin that brings full Obsidian markdown support to your documentation site. Write in Obsidian, publish with Rspress.
-
-## Features
-
-| Syntax | Description |
-|--------|-------------|
-| `[[Page]]` | Link to another page |
-| `[[Page\|Alias]]` | Link with custom display text |
-| `[[Page#Heading]]` | Link to a specific heading |
-| `[[Page#Heading\|Alias]]` | Link to heading with alias |
-| `[[#Heading]]` | Link to heading in current page |
-| `[[Page#^block]]` | Block reference |
-| `![[Page]]` | Transclude full page content |
-| `![[Page#Heading]]` | Transclude a specific section |
-| `![[Page#^block]]` | Transclude a specific block |
-| `![[image.png\|300x200]]` | Embed media with optional size |
-| `#tag` | Tag links (opt-in) |
-| `> [!note]` | Callouts (opt-in) |
-| Backlinks panel | Auto-generated per page (opt-in) |
-
-## Quick Start
-
-Install the plugin:
-
-```bash
-bun add rspress-plugin-obsidian-wikilink
-```
-
-Add it to your `rspress.config.ts`:
-
-```ts
-import path from "node:path";
-import { defineConfig } from "@rspress/core";
-import { pluginObsidianWikiLink } from "rspress-plugin-obsidian-wikilink";
-
-export default defineConfig({
-  root: path.join(__dirname, "docs"),
-  plugins: [
-    pluginObsidianWikiLink({
-      enableCallouts: true,
-      enableTagLinking: true,
-      enableBacklinks: true,
-      enableTransclusion: true,
-      enableMediaEmbeds: true,
-    }),
-  ],
-});
-```
-
-Start writing with Obsidian syntax:
-
-```markdown
-See [[getting-started]] to begin.
-
-![[shared/intro]]
-
-> [!tip] Did you know?
-> You can use all Obsidian wikilink syntax here.
-
-Related: #tutorial #docs
-```
-
-## Next Steps
-
-- [[guide/getting-started|Getting Started]] — Full installation and setup guide
-- [[guide/advanced|Advanced Usage]] — All configuration options
-- [[guide/api|API Reference]] — Programmatic usage and types
