@@ -3,19 +3,27 @@ export type DiagnosticMode = "error" | "warn";
 export interface RspressPluginObsidianWikiLinkOptions {
   onBrokenLink?: DiagnosticMode;
   onAmbiguousLink?: DiagnosticMode;
+  enableFuzzyMatching?: boolean;
 }
 
 export interface NormalizedPluginOptions {
   onBrokenLink: DiagnosticMode;
   onAmbiguousLink: DiagnosticMode;
+  enableFuzzyMatching: boolean;
+}
+
+export interface WikiSubpath {
+  kind: "heading" | "block";
+  value: string;
 }
 
 export interface ParsedWikiLink {
   raw: string;
   target: string;
-  anchor?: string;
   alias?: string;
-  isCurrentPageAnchor: boolean;
+  isEmbed: boolean;
+  subpath?: WikiSubpath;
+  isCurrentPageReference: boolean;
 }
 
 export interface WikilinkMatch {
@@ -31,13 +39,20 @@ export interface HeadingEntry {
   explicitId?: string;
 }
 
+export interface BlockEntry {
+  id: string;
+}
+
 export interface ContentPage {
   absolutePath: string;
   relativePath: string;
   routePath: string;
   pathKey: string;
   baseName: string;
+  title?: string;
+  aliases: string[];
   headings: HeadingEntry[];
+  blocks: BlockEntry[];
 }
 
 export interface ContentIndex {
@@ -46,6 +61,8 @@ export interface ContentIndex {
   byAbsolutePath: Map<string, ContentPage>;
   byPathKey: Map<string, ContentPage>;
   byBaseName: Map<string, ContentPage[]>;
+  byTitle: Map<string, ContentPage[]>;
+  byAlias: Map<string, ContentPage[]>;
 }
 
 export type ResolveStatus =
@@ -65,6 +82,7 @@ export interface ResolvedWikiLink {
 export interface ResolveContext {
   currentPage: ContentPage;
   index: ContentIndex;
+  options?: Pick<NormalizedPluginOptions, "enableFuzzyMatching">;
 }
 
 export function normalizePluginOptions(
@@ -73,5 +91,6 @@ export function normalizePluginOptions(
   return {
     onBrokenLink: options.onBrokenLink ?? "error",
     onAmbiguousLink: options.onAmbiguousLink ?? "error",
+    enableFuzzyMatching: options.enableFuzzyMatching ?? false,
   };
 }

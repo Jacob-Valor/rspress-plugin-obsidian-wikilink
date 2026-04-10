@@ -1,6 +1,6 @@
 import type { ParsedWikiLink, WikilinkMatch } from "./types.js";
 
-const WIKILINK_PATTERN = /\[\[([^\[\]]+?)\]\]/g;
+const WIKILINK_PATTERN = /!?\[\[([^\[\]]+?)\]\]/g;
 
 export function findWikilinkMatches(input: string): WikilinkMatch[] {
   const matches: WikilinkMatch[] = [];
@@ -11,10 +11,6 @@ export function findWikilinkMatches(input: string): WikilinkMatch[] {
     const start = match.index ?? -1;
 
     if (start < 0 || typeof inner !== "string") {
-      continue;
-    }
-
-    if (start > 0 && input[start - 1] === "!") {
       continue;
     }
 
@@ -30,6 +26,7 @@ export function findWikilinkMatches(input: string): WikilinkMatch[] {
 }
 
 export function parseWikiLink(inner: string, raw: string): ParsedWikiLink {
+  const isEmbed = raw.startsWith("![[");
   const pipeIndex = inner.indexOf("|");
   const targetAndAnchor = pipeIndex >= 0 ? inner.slice(0, pipeIndex) : inner;
   const alias = pipeIndex >= 0 ? inner.slice(pipeIndex + 1).trim() || undefined : undefined;
@@ -40,12 +37,18 @@ export function parseWikiLink(inner: string, raw: string): ParsedWikiLink {
 
   const target = rawTarget.trim();
   const anchor = rawAnchor?.trim() || undefined;
+  const subpath = anchor
+    ? anchor.startsWith("^")
+      ? { kind: "block" as const, value: anchor.slice(1).trim() }
+      : { kind: "heading" as const, value: anchor }
+    : undefined;
 
   return {
     raw,
     target,
-    anchor,
     alias,
-    isCurrentPageAnchor: target.length === 0 && typeof anchor === "string",
+    isEmbed,
+    subpath,
+    isCurrentPageReference: target.length === 0 && typeof subpath !== "undefined",
   };
 }
