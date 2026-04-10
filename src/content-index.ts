@@ -1,11 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import GithubSlugger from "github-slugger";
-import type { ContentIndex, ContentPage, HeadingEntry } from "./types.js";
-import { stripMarkdownFormatting } from "./slug.js";
+import type {
+  BlockEntry,
+  ContentIndex,
+  ContentPage,
+  HeadingEntry,
+} from "./types.js";
+import { normalizeLookupValue, stripMarkdownFormatting } from "./slug.js";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
-const contentIndexCache = new Map<string, { signature: string; index: ContentIndex }>();
+const contentIndexCache = new Map<
+  string,
+  { signature: string; index: ContentIndex }
+>();
 
 interface MarkdownFileEntry {
   absolutePath: string;
@@ -37,11 +45,16 @@ export function getCachedContentIndex(rootDir: string): ContentIndex {
   return index;
 }
 
-function buildContentIndexFromFiles(rootDir: string, files: MarkdownFileEntry[]): ContentIndex {
+function buildContentIndexFromFiles(
+  rootDir: string,
+  files: MarkdownFileEntry[],
+): ContentIndex {
   const pages = files.map((file) => buildContentPage(file));
   const byAbsolutePath = new Map<string, ContentPage>();
   const byPathKey = new Map<string, ContentPage>();
   const byBaseName = new Map<string, ContentPage[]>();
+  const byTitle = new Map<string, ContentPage[]>();
+  const byAlias = new Map<string, ContentPage[]>();
 
   for (const page of pages) {
     byAbsolutePath.set(page.absolutePath, page);
@@ -52,6 +65,14 @@ function buildContentIndexFromFiles(rootDir: string, files: MarkdownFileEntry[])
       existing.push(page);
       byBaseName.set(page.baseName, existing);
     }
+
+    if (page.title) {
+      pushNamedPage(byTitle, page.title, page);
+    }
+
+    for (const alias of page.aliases) {
+      pushNamedPage(byAlias, alias, page);
+    }
   }
 
   return {
@@ -60,6 +81,8 @@ function buildContentIndexFromFiles(rootDir: string, files: MarkdownFileEntry[])
     byAbsolutePath,
     byPathKey,
     byBaseName,
+    byTitle,
+    byAlias,
   };
 }
 
@@ -79,7 +102,11 @@ function scanMarkdownFiles(rootDir: string): MarkdownFileEntry[] {
       const absolutePath = path.join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name === ".git" || entry.name === "node_modules" || entry.name.startsWith(".")) {
+        if (
+          entry.name === ".git" ||
+          entry.name === "node_modules" ||
+          entry.name.startsWith(".")
+        ) {
           continue;
         }
 
@@ -95,7 +122,9 @@ function scanMarkdownFiles(rootDir: string): MarkdownFileEntry[] {
         continue;
       }
 
-      const relativePath = normalizeFsPath(path.relative(rootDir, absolutePath));
+      const relativePath = normalizeFsPath(
+        path.relative(rootDir, absolutePath),
+      );
       if (!isRoutableRelativePath(relativePath)) {
         continue;
       }
@@ -110,7 +139,9 @@ function scanMarkdownFiles(rootDir: string): MarkdownFileEntry[] {
     }
   }
 
-  results.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  results.sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath),
+  );
   return results;
 }
 
@@ -119,10 +150,13 @@ function isRoutableRelativePath(relativePath: string): boolean {
 }
 
 function buildContentPage(file: MarkdownFileEntry): ContentPage {
+  const markdown = fs.readFileSync(file.absolutePath, "utf8");
   const routePath = deriveRoutePath(file.relativePath);
   const pathKey = normalizePathKey(file.relativePath);
   const baseName = path.basename(pathKey);
-  const headings = extractHeadings(fs.readFileSync(file.absolutePath, "utf8"));
+  const { title, aliases } = extractFrontmatterMetadata(markdown);
+  const headings = extractHeadings(markdown);
+  const blocks = extractBlocks(markdown);
 
   return {
     absolutePath: file.absolutePath,
@@ -130,7 +164,10 @@ function buildContentPage(file: MarkdownFileEntry): ContentPage {
     routePath,
     pathKey,
     baseName,
+    title,
+    aliases,
     headings,
+    blocks,
   };
 }
 
@@ -203,12 +240,71 @@ function extractHeadings(markdown: string): HeadingEntry[] {
   return headings;
 }
 
-function pushHeading(headings: HeadingEntry[], slugger: GithubSlugger, rawHeading: string): void {
+function extractBlocks(markdown: string): BlockEntry[] {
+  const blocks: BlockEntry[] = [];
+  const seen = new Set<string>();
+  const lines = markdown.split(/\r?\n/);
+  let inFence = false;
+  let inFrontmatter = lines[0]?.trim() === "---";
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+
+    if (inFrontmatter) {
+      if (index > 0 && line.trim() === "---") {
+        inFrontmatter = false;
+      }
+      continue;
+    }
+
+    if (/^(```|~~~)/.test(line.trim())) {
+      inFence = !inFence;
+      continue;
+    }
+
+    if (inFence) {
+      continue;
+    }
+
+    const standaloneMatch = /^\^([A-Za-z0-9-]+)\s*$/.exec(line.trim());
+    if (standaloneMatch?.[1]) {
+      pushBlock(blocks, seen, standaloneMatch[1]);
+      continue;
+    }
+
+    const explicitIdMatch = line.match(/\{#([A-Za-z0-9-]+)\}\s*$/);
+    if (explicitIdMatch?.[1] && !/^\s{0,3}(#{1,6})[ \t]+/.test(line)) {
+      pushBlock(blocks, seen, explicitIdMatch[1]);
+    }
+  }
+
+  return blocks;
+}
+
+function pushBlock(blocks: BlockEntry[], seen: Set<string>, id: string): void {
+  const normalizedId = id.trim();
+  if (!normalizedId || seen.has(normalizedId)) {
+    return;
+  }
+
+  seen.add(normalizedId);
+  blocks.push({ id: normalizedId });
+}
+
+function pushHeading(
+  headings: HeadingEntry[],
+  slugger: GithubSlugger,
+  rawHeading: string,
+): void {
   const trimmedHeading = rawHeading.trim();
-  const explicitIdMatch = trimmedHeading.match(/\s*\{#([A-Za-z0-9_:.\-]+)\}\s*$/);
+  const explicitIdMatch = trimmedHeading.match(
+    /\s*\{#([A-Za-z0-9_:.\-]+)\}\s*$/,
+  );
   const explicitId = explicitIdMatch?.[1];
   const headingText = explicitIdMatch
-    ? trimmedHeading.slice(0, trimmedHeading.length - explicitIdMatch[0].length).trim()
+    ? trimmedHeading
+        .slice(0, trimmedHeading.length - explicitIdMatch[0].length)
+        .trim()
     : trimmedHeading;
   const normalizedText = stripMarkdownFormatting(headingText);
 
@@ -221,6 +317,130 @@ function pushHeading(headings: HeadingEntry[], slugger: GithubSlugger, rawHeadin
     slug: slugger.slug(normalizedText),
     explicitId,
   });
+}
+
+function extractFrontmatterMetadata(markdown: string): {
+  title?: string;
+  aliases: string[];
+} {
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") {
+    return { aliases: [] };
+  }
+
+  const closingIndex = lines.findIndex(
+    (line, index) => index > 0 && line.trim() === "---",
+  );
+  if (closingIndex < 0) {
+    return { aliases: [] };
+  }
+
+  let title: string | undefined;
+  const aliases: string[] = [];
+  let pendingListKey: "aliases" | undefined;
+
+  for (let index = 1; index < closingIndex; index += 1) {
+    const line = lines[index] ?? "";
+
+    if (pendingListKey === "aliases") {
+      const aliasMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
+      if (aliasMatch?.[1]) {
+        const aliasValue = stripWrappingQuotes(aliasMatch[1].trim());
+        if (aliasValue) {
+          aliases.push(aliasValue);
+        }
+        continue;
+      }
+
+      if (line.trim().length === 0) {
+        continue;
+      }
+
+      pendingListKey = undefined;
+    }
+
+    const keyMatch = /^\s*([A-Za-z0-9_-]+)\s*:\s*(.*?)\s*$/.exec(line);
+    if (!keyMatch) {
+      continue;
+    }
+
+    const rawKey = keyMatch[1];
+    const rawValue = keyMatch[2];
+    if (typeof rawKey !== "string" || typeof rawValue !== "string") {
+      continue;
+    }
+
+    const key = rawKey.toLowerCase();
+    const value = rawValue.trim();
+
+    if (key === "title") {
+      const parsedTitle = stripWrappingQuotes(value);
+      if (parsedTitle) {
+        title = parsedTitle;
+      }
+      continue;
+    }
+
+    if (key !== "aliases" && key !== "alias") {
+      continue;
+    }
+
+    if (value.length === 0) {
+      pendingListKey = "aliases";
+      continue;
+    }
+
+    for (const alias of parseInlineAliases(value)) {
+      aliases.push(alias);
+    }
+  }
+
+  return {
+    title,
+    aliases: [...new Set(aliases)],
+  };
+}
+
+function parseInlineAliases(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const listMatch = /^\[(.*)\]$/.exec(trimmed);
+  if (!listMatch) {
+    const alias = stripWrappingQuotes(trimmed);
+    return alias ? [alias] : [];
+  }
+
+  const listValue = listMatch[1];
+  if (typeof listValue !== "string") {
+    return [];
+  }
+
+  return listValue
+    .split(",")
+    .map((part) => stripWrappingQuotes(part.trim()))
+    .filter((part): part is string => part.length > 0);
+}
+
+function stripWrappingQuotes(value: string): string {
+  return value.replace(/^(["'])(.*)\1$/, "$2").trim();
+}
+
+function pushNamedPage(
+  map: Map<string, ContentPage[]>,
+  rawValue: string,
+  page: ContentPage,
+): void {
+  const key = normalizeLookupValue(rawValue);
+  if (!key) {
+    return;
+  }
+
+  const existing = map.get(key) ?? [];
+  existing.push(page);
+  map.set(key, existing);
 }
 
 export function normalizeFsPath(input: string): string {
