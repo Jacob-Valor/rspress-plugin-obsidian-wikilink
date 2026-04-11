@@ -1,5 +1,5 @@
 ---
-description: Install and configure rspress-plugin-obsidian-wikilink in your Rspress project. Learn wikilink syntax, transclusion, media embeds, callouts, and tag linking.
+description: Install and configure rspress-plugin-obsidian-wikilink in your Rspress project. Learn wikilink syntax, transclusion, media embeds, callouts, tag linking, and comment stripping.
 ---
 
 # Getting Started
@@ -60,15 +60,33 @@ Enable with `enableTransclusion: true` and `enableMediaEmbeds: true`:
 | `![[audio.mp3]]` | Embed audio |
 | `![[doc.pdf]]` | Embed a PDF |
 
+## Obsidian Comments
+
+`%% ... %%` comments are **always stripped** — no configuration needed:
+
+```markdown
+This is visible. %% This is a private note. %% Back to visible.
+```
+
+Multi-line block comments also work:
+
+```markdown
+%%
+Draft content — not published.
+%%
+```
+
 ## Optional Features
 
 | Option | What it enables |
 |--------|----------------|
 | `enableTagLinking` | `#tag` → `[#tag](/tags/tag)` |
-| `enableCallouts` | `> [!note]` → styled HTML divs |
+| `enableTagPages` | Auto-generate `/tags/{name}` index pages |
+| `enableCallouts` | `> [!note]` → styled HTML (+ foldable with `+`/`-`) |
 | `enableBacklinks` | Appends backlinks panel to each page |
 | `enableTransclusion` | `![[Page]]` inlines file content |
 | `enableMediaEmbeds` | `![[img.png]]` renders as `<img>` |
+| `enableDefaultStyles` | Injects bundled CSS for all plugin classes |
 | `enableFuzzyMatching` | Shortest-suffix path fallback |
 | `enableCaseInsensitiveLookup` | Case-insensitive path resolution |
 
@@ -81,14 +99,16 @@ pluginObsidianWikiLink({
   enableFuzzyMatching: false,
   enableCaseInsensitiveLookup: false,
   enableTagLinking: true,
+  enableTagPages: true,
   enableCallouts: true,
   enableBacklinks: true,
   enableTransclusion: true,
   enableMediaEmbeds: true,
+  enableDefaultStyles: true,
 });
 ```
 
 ## Next Steps
 
-- Explore [[advanced|Advanced Usage]] for all configuration options
+- Explore [[advanced|Advanced Usage]] for all configuration options in detail
 - See the [[api|API Reference]] for programmatic usage

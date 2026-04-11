@@ -11,13 +11,14 @@ Obsidian-style wikilinks for Rspress. Write your docs in Obsidian, publish with 
 | `[[Page#Heading]]` | Link to a specific heading |
 | `[[Page#Heading\|Alias]]` | Link to heading with alias |
 | `[[#Heading]]` | Link to heading in current page |
-| `[[Page#^block]]` | Block reference |
+| `[[Page#^block]]` | Block reference (standalone or inline) |
 | `![[Page]]` | Transclude full page content |
 | `![[Page#Heading]]` | Transclude a specific section |
 | `![[Page#^block]]` | Transclude a specific block |
 | `![[image.png\|300x200]]` | Embed media with optional size |
 | `#tag` | Tag links (opt-in) |
-| `> [!note]` | Callouts (opt-in) |
+| `> [!note]` | Callouts with aliases + foldable state (opt-in) |
+| `%% comment %%` | Obsidian comments — stripped from output |
 | Backlinks panel | Auto-generated per page (opt-in) |
 
 The plugin rewrites wikilinks during the Rspress remark pipeline. All features are opt-in via configuration.
@@ -69,6 +70,8 @@ pluginObsidianWikiLink({
   enableBacklinks: false,             // append backlinks panel (default: false)
   enableTransclusion: false,          // ![[Page]] → inline content (default: false)
   enableMediaEmbeds: false,           // ![[img.png]] → <img> (default: false)
+  enableTagPages: false,              // generate /tags/{name} pages (default: false)
+  enableDefaultStyles: false,         // inject bundled CSS (default: false)
 });
 ```
 
@@ -95,15 +98,18 @@ pluginObsidianWikiLink({
 ### `enableTagLinking`
 
 - `false` — tags are left as-is (default)
-- `true` — converts `#tag` to `[#tag](/tags/tag)` (skips code blocks)
+- `true` — converts `#tag` to `[#tag](/tags/tag)` (skips code blocks and URL fragments)
 
 ### `enableCallouts`
 
 - `false` — callouts are left as blockquotes (default)
-- `true` — transforms Obsidian callouts to styled HTML divs
+- `true` — transforms Obsidian callouts to styled HTML divs or `<details>` elements
 
-Supported types: `note`, `tip`, `warning`, `danger`, `info`, `success`, `question`, `bug`, `example`, `quote`
+Supported base types: `note`, `tip`, `warning`, `danger`, `info`, `success`, `question`, `bug`, `example`, `quote`
 
+Supported aliases: `abstract`/`summary`/`tldr`, `check`/`done`, `help`/`faq`, `caution`/`attention`, `failure`/`fail`/`missing`
+
+**Static callout:**
 ```markdown
 > [!tip] Pro Tip
 > This is a callout
@@ -116,6 +122,17 @@ Output:
   <div class="callout-content">This is a callout</div>
 </div>
 ```
+
+**Foldable callouts:**
+```markdown
+> [!note]- Collapsed by default
+> Hidden until expanded.
+
+> [!note]+ Expanded by default
+> Visible immediately.
+```
+
+Output uses native `<details>`/`<summary>` — no JavaScript required.
 
 ### `enableBacklinks`
 
@@ -132,8 +149,10 @@ Supports section and block scoping:
 | Syntax | Behavior |
 |--------|----------|
 | `![[Page]]` | Inlines full page content (frontmatter stripped) |
-| `![[Page#Heading]]` | Inlines only the content under that heading |
+| `![[Page#Heading]]` | Inlines only the content under that heading (ATX and setext) |
 | `![[Page#^block]]` | Inlines only the paragraph annotated with `^block` |
+
+Any wikilinks inside the transcluded content are resolved automatically.
 
 Output:
 ```html
@@ -155,6 +174,70 @@ Output:
 | `pdf` | `<iframe>` |
 
 Size parameter: `![[image.png|300x200]]` → `<img width="300" height="200" />`
+
+Media paths are resolved relative to the current file, then the docs root, then fall back to a root-relative URL.
+
+### `enableTagPages`
+
+- `false` — no tag pages generated (default)
+- `true` — auto-generates a `/tags/{name}` index page for every unique tag found in frontmatter `tags:` fields
+
+Each generated page lists all pages carrying that tag with links. Requires `enableTagLinking: true` for the inline `#tag` links to point to these pages.
+
+```yaml
+---
+tags:
+  - tutorial
+  - obsidian
+---
+```
+
+Generates `/tags/tutorial` and `/tags/obsidian`.
+
+### `enableDefaultStyles`
+
+- `false` — no styles injected (default)
+- `true` — automatically injects the bundled stylesheet via Rspress `globalStyles`
+
+The stylesheet covers all CSS classes emitted by this plugin:
+- `.callout`, `.callout-{type}`, `.callout-title`, `.callout-content`
+- `details.callout > summary.callout-title` (foldable)
+- `.obsidian-backlinks`
+- `.obsidian-transclusion`
+- `.obsidian-embed`
+
+You can also import the stylesheet manually:
+
+```ts
+// rspress.config.ts
+import { pluginObsidianWikiLink } from "rspress-plugin-obsidian-wikilink";
+import stylesPath from "rspress-plugin-obsidian-wikilink/styles.css?url";
+
+export default defineConfig({
+  globalStyles: stylesPath,
+  plugins: [pluginObsidianWikiLink()],
+});
+```
+
+Or in a CSS file:
+```css
+@import "rspress-plugin-obsidian-wikilink/styles.css";
+```
+
+## Obsidian Comments
+
+`%% ... %%` comments are automatically stripped from the output — no option needed.
+
+```markdown
+This text is visible. %% This comment is private. %% Back to visible.
+```
+
+Multi-line block comments are also stripped:
+```markdown
+%%
+This entire paragraph is a private draft note.
+%%
+```
 
 ## Resolution rules
 
@@ -180,7 +263,9 @@ Examples:
 | `[[guide/getting-started#^install-block]]` | Block reference |
 | `![[guide/getting-started#Install]]` | Section transclusion |
 
-Supported heading formats: ATX, ATX with closing `#`, up to 3 leading spaces, setext, explicit IDs `{#custom-anchor}`
+Supported heading formats: ATX, ATX with closing `#`, up to 3 leading spaces, setext (`===` / `---`), explicit IDs `{#custom-anchor}`
+
+Supported block ID formats: standalone line (`^block-id`) and inline at end of paragraph (`text content ^block-id`)
 
 ## Development
 
@@ -194,6 +279,9 @@ bun run typecheck
 # Run tests
 bun test
 
+# Build
+bun run build
+
 # Build docs
 bun run docs:build
 ```
@@ -206,10 +294,16 @@ Functions:
 - `buildContentIndex`
 - `getCachedContentIndex`
 - `buildBacklinksIndex`
+- `getCachedBacklinksIndex`
 - `renderBacklinksHtml`
+- `generateTagPages`
 - `parseWikiLink`
 - `findWikilinkMatches`
 - `resolveWikiLink`
+
+Stylesheets:
+
+- `rspress-plugin-obsidian-wikilink/styles.css`
 
 Types:
 
@@ -220,6 +314,7 @@ Types:
 - `ContentIndex`
 - `ResolvedWikiLink`
 - `ResolveContext`
+- `BacklinkRef`
 - And more — see `src/types.ts`
 
 ## License
@@ -228,4 +323,4 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 ## Status
 
-v0.1.1 — full Obsidian markdown feature coverage for static Rspress docs.
+v0.1.x — ~95% Obsidian markdown feature coverage for static Rspress docs.

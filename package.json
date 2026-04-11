@@ -28,13 +28,14 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		}
+		},
+		"./styles.css": "./dist/styles.css"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
-		"build:clean": "rm -rf dist && tsc -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json && cp src/styles.css dist/styles.css",
+		"build:clean": "rm -rf dist && tsc -p tsconfig.build.json && cp src/styles.css dist/styles.css",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check src/ tests/",
 		"lint:fix": "biome check --write src/ tests/",

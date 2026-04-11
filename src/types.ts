@@ -10,6 +10,10 @@ export interface RspressPluginObsidianWikiLinkOptions {
 	enableBacklinks?: boolean;
 	enableTransclusion?: boolean;
 	enableMediaEmbeds?: boolean;
+	/** Auto-generate /tags/{name} index pages for every frontmatter tag. Requires enableTagLinking: true. */
+	enableTagPages?: boolean;
+	/** Inject the bundled .obsidian-* and .callout-* stylesheet automatically. */
+	enableDefaultStyles?: boolean;
 }
 
 export interface NormalizedPluginOptions {
@@ -22,6 +26,8 @@ export interface NormalizedPluginOptions {
 	enableBacklinks: boolean;
 	enableTransclusion: boolean;
 	enableMediaEmbeds: boolean;
+	enableTagPages: boolean;
+	enableDefaultStyles: boolean;
 }
 
 export interface WikiSubpath {
@@ -63,6 +69,7 @@ export interface ContentPage {
 	baseName: string;
 	title?: string;
 	aliases: string[];
+	tags: string[];
 	headings: HeadingEntry[];
 	blocks: BlockEntry[];
 }
@@ -75,6 +82,7 @@ export interface ContentIndex {
 	byBaseName: Map<string, ContentPage[]>;
 	byTitle: Map<string, ContentPage[]>;
 	byAlias: Map<string, ContentPage[]>;
+	byTag: Map<string, ContentPage[]>;
 }
 
 export type ResolveStatus =

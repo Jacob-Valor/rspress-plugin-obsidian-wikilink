@@ -5,9 +5,28 @@ import { normalizePathKey } from "./utils.ts";
 
 const WIKILINK_RE = /!?\[\[([^\]]+?)\]\]/g;
 
+// Keyed by the ContentIndex object itself — automatically invalidated when
+// getCachedContentIndex returns a new index after file changes.
+const backlinksCache = new WeakMap<ContentIndex, Map<string, BacklinkRef[]>>();
+
 export interface BacklinkRef {
 	routePath: string;
 	title: string;
+}
+
+/**
+ * Return the backlinks index for the given content index, reusing the cached
+ * result when the index object hasn't changed (same reference = same files).
+ */
+export async function getCachedBacklinksIndex(
+	index: ContentIndex,
+): Promise<Map<string, BacklinkRef[]>> {
+	const cached = backlinksCache.get(index);
+	if (cached) return cached;
+
+	const result = await buildBacklinksIndex(index);
+	backlinksCache.set(index, result);
+	return result;
 }
 
 /**

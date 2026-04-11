@@ -1,0 +1,196 @@
+/* rspress-plugin-obsidian-wikilink — default stylesheet
+   Import via: enableDefaultStyles: true in pluginObsidianWikiLink()
+   or manually: import 'rspress-plugin-obsidian-wikilink/styles.css'        */
+
+/* ─── Callouts ─────────────────────────────────────────────────────────── */
+
+.callout {
+	border-left: 4px solid var(--callout-color, #888);
+	border-radius: 4px;
+	margin: 1rem 0;
+	padding: 0;
+	background: var(--callout-bg, rgba(128, 128, 128, 0.08));
+	overflow: hidden;
+}
+
+.callout-title {
+	display: flex;
+	align-items: center;
+	gap: 0.4em;
+	padding: 0.5rem 0.75rem;
+	font-weight: 600;
+	background: var(--callout-title-bg, rgba(128, 128, 128, 0.12));
+}
+
+/* <details> foldable callouts — summary doubles as the title bar */
+details.callout > summary.callout-title {
+	cursor: pointer;
+	list-style: none;
+	user-select: none;
+}
+
+details.callout > summary.callout-title::-webkit-details-marker {
+	display: none;
+}
+
+.callout-content {
+	padding: 0.5rem 0.75rem;
+}
+
+.callout-content > *:first-child {
+	margin-top: 0;
+}
+.callout-content > *:last-child {
+	margin-bottom: 0;
+}
+
+/* Per-type colour tokens */
+.callout-note {
+	--callout-color: #448aff;
+	--callout-bg: rgba(68, 138, 255, 0.07);
+	--callout-title-bg: rgba(68, 138, 255, 0.12);
+}
+.callout-tip {
+	--callout-color: #00bfa5;
+	--callout-bg: rgba(0, 191, 165, 0.07);
+	--callout-title-bg: rgba(0, 191, 165, 0.12);
+}
+.callout-info {
+	--callout-color: #00b0ff;
+	--callout-bg: rgba(0, 176, 255, 0.07);
+	--callout-title-bg: rgba(0, 176, 255, 0.12);
+}
+.callout-success {
+	--callout-color: #00c853;
+	--callout-bg: rgba(0, 200, 83, 0.07);
+	--callout-title-bg: rgba(0, 200, 83, 0.12);
+}
+.callout-question {
+	--callout-color: #64dd17;
+	--callout-bg: rgba(100, 221, 23, 0.07);
+	--callout-title-bg: rgba(100, 221, 23, 0.12);
+}
+.callout-warning {
+	--callout-color: #ff9100;
+	--callout-bg: rgba(255, 145, 0, 0.07);
+	--callout-title-bg: rgba(255, 145, 0, 0.12);
+}
+.callout-caution {
+	--callout-color: #ff9100;
+	--callout-bg: rgba(255, 145, 0, 0.07);
+	--callout-title-bg: rgba(255, 145, 0, 0.12);
+}
+.callout-danger {
+	--callout-color: #ff1744;
+	--callout-bg: rgba(255, 23, 68, 0.07);
+	--callout-title-bg: rgba(255, 23, 68, 0.12);
+}
+.callout-failure {
+	--callout-color: #ff1744;
+	--callout-bg: rgba(255, 23, 68, 0.07);
+	--callout-title-bg: rgba(255, 23, 68, 0.12);
+}
+.callout-bug {
+	--callout-color: #f50057;
+	--callout-bg: rgba(245, 0, 87, 0.07);
+	--callout-title-bg: rgba(245, 0, 87, 0.12);
+}
+.callout-example {
+	--callout-color: #7c4dff;
+	--callout-bg: rgba(124, 77, 255, 0.07);
+	--callout-title-bg: rgba(124, 77, 255, 0.12);
+}
+.callout-abstract {
+	--callout-color: #00b0ff;
+	--callout-bg: rgba(0, 176, 255, 0.07);
+	--callout-title-bg: rgba(0, 176, 255, 0.12);
+}
+.callout-quote {
+	--callout-color: #9e9e9e;
+	--callout-bg: rgba(158, 158, 158, 0.07);
+	--callout-title-bg: rgba(158, 158, 158, 0.12);
+}
+
+/* ─── Backlinks panel ───────────────────────────────────────────────────── */
+
+.obsidian-backlinks {
+	margin-top: 3rem;
+	padding-top: 1.5rem;
+	border-top: 1px solid var(--rp-c-divider, #e2e2e2);
+}
+
+.obsidian-backlinks h2 {
+	font-size: 0.9rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--rp-c-text-2, #888);
+	margin-bottom: 0.5rem;
+}
+
+.obsidian-backlinks ul {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+
+.obsidian-backlinks a {
+	display: inline-block;
+	padding: 0.2rem 0.6rem;
+	border-radius: 999px;
+	font-size: 0.85rem;
+	background: var(--rp-c-bg-soft, #f5f5f5);
+	color: var(--rp-c-brand, #448aff);
+	text-decoration: none;
+	transition: background 0.15s;
+}
+
+.obsidian-backlinks a:hover {
+	background: var(--rp-c-bg-mute, #ebebeb);
+}
+
+/* ─── Transclusion wrapper ──────────────────────────────────────────────── */
+
+.obsidian-transclusion {
+	border-left: 3px solid var(--rp-c-brand, #448aff);
+	padding: 0.75rem 1rem;
+	margin: 1rem 0;
+	border-radius: 0 4px 4px 0;
+	background: var(--rp-c-bg-soft, #f9f9f9);
+	font-size: 0.95em;
+}
+
+.obsidian-transclusion > *:first-child {
+	margin-top: 0;
+}
+.obsidian-transclusion > *:last-child {
+	margin-bottom: 0;
+}
+
+/* ─── Embed anchor (non-media ![[Page]]) ────────────────────────────────── */
+
+a.obsidian-embed {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25em;
+	padding: 0.15rem 0.5rem;
+	border-radius: 4px;
+	font-size: 0.9em;
+	background: var(--rp-c-bg-soft, #f5f5f5);
+	color: var(--rp-c-brand, #448aff);
+	text-decoration: none;
+	border: 1px solid var(--rp-c-divider, #e2e2e2);
+}
+
+a.obsidian-embed::before {
+	content: "↗";
+	font-size: 0.8em;
+	opacity: 0.6;
+}
+
+a.obsidian-embed:hover {
+	background: var(--rp-c-bg-mute, #ebebeb);
+}

@@ -60,6 +60,7 @@ async function buildContentIndexFromFiles(
 	const byBaseName = new Map<string, ContentPage[]>();
 	const byTitle = new Map<string, ContentPage[]>();
 	const byAlias = new Map<string, ContentPage[]>();
+	const byTag = new Map<string, ContentPage[]>();
 
 	for (const page of pages) {
 		byAbsolutePath.set(page.absolutePath, page);
@@ -78,6 +79,10 @@ async function buildContentIndexFromFiles(
 		for (const alias of page.aliases) {
 			pushNamedPage(byAlias, alias, page);
 		}
+
+		for (const tag of page.tags) {
+			pushNamedPage(byTag, tag, page);
+		}
 	}
 
 	return {
@@ -88,6 +93,7 @@ async function buildContentIndexFromFiles(
 		byBaseName,
 		byTitle,
 		byAlias,
+		byTag,
 	};
 }
 
@@ -155,7 +161,7 @@ async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
 	const routePath = deriveRoutePath(file.relativePath);
 	const pathKey = normalizePathKey(file.relativePath);
 	const baseName = path.basename(pathKey);
-	const { title, aliases } = extractFrontmatterMetadata(markdown);
+	const { title, aliases, tags } = extractFrontmatterMetadata(markdown);
 	const headings = extractHeadings(markdown);
 	const blocks = extractBlocks(markdown);
 
@@ -167,6 +173,7 @@ async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
 		baseName,
 		title,
 		aliases,
+		tags,
 		headings,
 		blocks,
 	};
@@ -268,6 +275,13 @@ function extractBlocks(markdown: string): BlockEntry[] {
 		const explicitIdMatch = line.match(/\{#([A-Za-z0-9-]+)\}\s*$/);
 		if (explicitIdMatch?.[1] && !/^\s{0,3}(#{1,6})[ \t]+/.test(line)) {
 			pushBlock(blocks, seen, explicitIdMatch[1]);
+			continue;
+		}
+
+		// Inline block ID: "Paragraph text ^block-id" appended at end of line
+		const inlineBlockMatch = /\s\^([A-Za-z0-9-]+)\s*$/.exec(line);
+		if (inlineBlockMatch?.[1]) {
+			pushBlock(blocks, seen, inlineBlockMatch[1]);
 		}
 	}
 
@@ -315,32 +329,38 @@ function pushHeading(
 function extractFrontmatterMetadata(markdown: string): {
 	title?: string;
 	aliases: string[];
+	tags: string[];
 } {
 	const lines = markdown.split(/\r?\n/);
 	if (lines[0]?.trim() !== "---") {
-		return { aliases: [] };
+		return { aliases: [], tags: [] };
 	}
 
 	const closingIndex = lines.findIndex(
 		(line, index) => index > 0 && line.trim() === "---",
 	);
 	if (closingIndex < 0) {
-		return { aliases: [] };
+		return { aliases: [], tags: [] };
 	}
 
 	let title: string | undefined;
 	const aliases: string[] = [];
-	let pendingListKey: "aliases" | undefined;
+	const tags: string[] = [];
+	let pendingListKey: "aliases" | "tags" | undefined;
 
 	for (let index = 1; index < closingIndex; index += 1) {
 		const line = lines[index] ?? "";
 
-		if (pendingListKey === "aliases") {
-			const aliasMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
-			if (aliasMatch?.[1]) {
-				const aliasValue = stripWrappingQuotes(aliasMatch[1].trim());
-				if (aliasValue) {
-					aliases.push(aliasValue);
+		if (pendingListKey === "aliases" || pendingListKey === "tags") {
+			const listItemMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
+			if (listItemMatch?.[1]) {
+				const itemValue = stripWrappingQuotes(listItemMatch[1].trim());
+				if (itemValue) {
+					if (pendingListKey === "aliases") {
+						aliases.push(itemValue);
+					} else {
+						tags.push(itemValue);
+					}
 				}
 				continue;
 			}
@@ -374,23 +394,32 @@ function extractFrontmatterMetadata(markdown: string): {
 			continue;
 		}
 
-		if (key !== "aliases" && key !== "alias") {
+		if (key === "aliases" || key === "alias") {
+			if (value.length === 0) {
+				pendingListKey = "aliases";
+				continue;
+			}
+			for (const alias of parseInlineAliases(value)) {
+				aliases.push(alias);
+			}
 			continue;
 		}
 
-		if (value.length === 0) {
-			pendingListKey = "aliases";
-			continue;
-		}
-
-		for (const alias of parseInlineAliases(value)) {
-			aliases.push(alias);
+		if (key === "tags" || key === "tag") {
+			if (value.length === 0) {
+				pendingListKey = "tags";
+				continue;
+			}
+			for (const tag of parseInlineAliases(value)) {
+				tags.push(tag);
+			}
 		}
 	}
 
 	return {
 		title,
 		aliases: [...new Set(aliases)],
+		tags: [...new Set(tags)],
 	};
 }
 

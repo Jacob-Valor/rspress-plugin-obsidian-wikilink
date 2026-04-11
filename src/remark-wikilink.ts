@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type {
 	Blockquote,
 	HTML,
@@ -10,18 +11,26 @@ import type {
 import { type RemarkPluginFactory, unistVisit } from "rspress-plugin-devkit";
 import type { Parent } from "unist";
 import type { VFile } from "vfile";
-import { buildBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
+import { getCachedBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
 import { getCachedContentIndex } from "./content-index.ts";
 import { findWikilinkMatches, parseWikiLink } from "./parse-wikilink.ts";
 import { resolveWikiLink } from "./resolve-wikilink.ts";
 import type {
+	ContentIndex,
+	ContentPage,
 	NormalizedPluginOptions,
 	RemarkWikiLinkPluginOptions,
 } from "./types.ts";
 import { normalizeFsPath } from "./utils.ts";
 
-const TAG_PATTERN = /#([a-zA-Z0-9_-]+)/g;
-const CALLOUT_HEADER_PATTERN = /^\[!(\w+)\][-+]?\s*(.*)$/;
+// Tags must start with a letter or underscore (not a digit) and must not be
+// preceded by a word character or "/" (prevents matching URL fragments,
+// hex colour codes, and markdown heading anchors).
+const TAG_PATTERN = /(?<![/\w])#([a-zA-Z_][a-zA-Z0-9_-]*)/g;
+// Capture optional fold operator: '+' = expanded, '-' = collapsed, absent = static
+const CALLOUT_HEADER_PATTERN = /^\[!(\w+)\]([-+])?\s*(.*)$/;
+// Obsidian inline and block comments: %% ... %%
+const COMMENT_PATTERN = /%%[\s\S]*?%%/g;
 
 const WIKILINK_EMBED_PATTERN = /!\[\[([^\]]+)\]\]/g;
 
@@ -49,6 +58,25 @@ const CALLOUT_ICONS: Record<string, string> = {
 	bug: "🐛",
 	example: "📋",
 	quote: "📜",
+	abstract: "📋",
+	failure: "❌",
+	caution: "⚠️",
+};
+
+// Maps Obsidian callout type aliases to their canonical type for icon lookup.
+const CALLOUT_TYPE_ALIASES: Record<string, string> = {
+	abstract: "abstract",
+	summary: "abstract",
+	tldr: "abstract",
+	check: "success",
+	done: "success",
+	help: "question",
+	faq: "question",
+	caution: "caution",
+	attention: "caution",
+	failure: "failure",
+	fail: "failure",
+	missing: "failure",
 };
 
 const SKIP_PARENT_TYPES = new Set([
@@ -84,6 +112,28 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 			enableFuzzyMatching: options.enableFuzzyMatching,
 			enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
 		};
+
+		// Strip Obsidian comments (%% ... %%) before all other transforms.
+		unistVisit(tree, "text", (node, position, parent) => {
+			if (!node.value.includes("%%")) return;
+			const stripped = node.value.replace(COMMENT_PATTERN, "");
+			if (stripped === node.value) return;
+
+			if (
+				stripped.trim().length === 0 &&
+				parent &&
+				typeof position === "number"
+			) {
+				// Remove the now-empty text node from its parent
+				(parent as Parent & { children: unknown[] }).children.splice(
+					position,
+					1,
+				);
+				return;
+			}
+
+			node.value = stripped;
+		});
 
 		if (options.enableTagLinking) {
 			unistVisit(tree, "text", (node, position, parent) => {
@@ -158,8 +208,10 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 					return;
 				}
 
-				const calloutType = calloutMatch[1]?.toLowerCase() ?? "note";
-				const calloutTitle = calloutMatch[2]?.trim() || calloutType;
+				const rawType = calloutMatch[1]?.toLowerCase() ?? "note";
+				const calloutType = CALLOUT_TYPE_ALIASES[rawType] ?? rawType;
+				const foldState = calloutMatch[2]; // '+' | '-' | undefined
+				const calloutTitle = calloutMatch[3]?.trim() || rawType;
 				const icon = CALLOUT_ICONS[calloutType] ?? "📝";
 
 				const remainingLines = lines.slice(1);
@@ -169,29 +221,13 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 					firstText.value = remainingLines.join("\n");
 				}
 
-				const openDiv: HTML = {
-					type: "html",
-					value: `<div class="callout callout-${escapeHtmlAttribute(calloutType)}">`,
-				};
-				const titleDiv: HTML = {
-					type: "html",
-					value: `<div class="callout-title">${icon} ${escapeHtmlText(calloutTitle)}</div>`,
-				};
-
-				const replacements: Root["children"] = [openDiv, titleDiv];
-
-				if (bq.children.length > 0) {
-					replacements.push(
-						{ type: "html", value: '<div class="callout-content">' },
-						...(bq.children as Root["children"]),
-						{ type: "html", value: "</div></div>" },
-					);
-				} else {
-					replacements.push({
-						type: "html",
-						value: '<div class="callout-content"></div></div>',
-					});
-				}
+				const replacements: Root["children"] = buildCalloutNodes(
+					calloutType,
+					calloutTitle,
+					icon,
+					foldState,
+					bq.children as Root["children"],
+				);
 
 				const parentNode = parent as Parent & { children: Root["children"] };
 				parentNode.children.splice(position, 1, ...replacements);
@@ -240,15 +276,26 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 
 					if (options.enableMediaEmbeds && IMAGE_EXTS.has(ext)) {
 						const sizeAttr = parseSizeAttr(sizeParam);
-						const escapedTarget = escapeHtmlAttribute(target);
-						result += `<img src="${escapedTarget}" alt="${escapedTarget}"${sizeAttr} loading="lazy" />`;
+						const src = escapeHtmlAttribute(
+							resolveMediaSrc(target, docsRoot, currentFilePath),
+						);
+						result += `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`;
 					} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
-						result += `<audio controls src="${escapeHtmlAttribute(target)}"></audio>`;
+						const src = escapeHtmlAttribute(
+							resolveMediaSrc(target, docsRoot, currentFilePath),
+						);
+						result += `<audio controls src="${src}"></audio>`;
 					} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
 						const sizeAttr = parseSizeAttr(sizeParam);
-						result += `<video controls src="${escapeHtmlAttribute(target)}"${sizeAttr}></video>`;
+						const src = escapeHtmlAttribute(
+							resolveMediaSrc(target, docsRoot, currentFilePath),
+						);
+						result += `<video controls src="${src}"${sizeAttr}></video>`;
 					} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
-						result += `<iframe src="${escapeHtmlAttribute(target)}" width="100%" height="600px" frameborder="0"></iframe>`;
+						const src = escapeHtmlAttribute(
+							resolveMediaSrc(target, docsRoot, currentFilePath),
+						);
+						result += `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`;
 					} else if (options.enableTransclusion) {
 						const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
 							currentPage,
@@ -282,6 +329,14 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 								if (transcludedContent === undefined) {
 									transcludedContent = stripFrontmatter(content);
 								}
+
+								// Resolve any wikilinks inside the transcluded markdown
+								transcludedContent = resolveWikilinksInText(
+									transcludedContent,
+									currentPage,
+									index,
+									resolveOptions,
+								);
 
 								result += `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedContent}\n</div>`;
 							} catch {
@@ -374,7 +429,7 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 		});
 
 		if (options.enableBacklinks) {
-			const backlinksMap = await buildBacklinksIndex(index);
+			const backlinksMap = await getCachedBacklinksIndex(index);
 			const refs = backlinksMap.get(currentPage.routePath) ?? [];
 			const html = renderBacklinksHtml(refs);
 			if (html) {
@@ -463,6 +518,145 @@ function parseSizeAttr(sizeParam: string): string {
 	return height ? ` width="${width}" height="${height}"` : ` width="${width}"`;
 }
 
+/**
+ * Resolve a media embed target to a root-relative URL.
+ * Tries the file relative to the current markdown file, then relative to
+ * docsRoot. Falls back to a root-relative path if neither is found on disk.
+ */
+function resolveMediaSrc(
+	target: string,
+	docsRoot: string,
+	currentFilePath: string,
+): string {
+	const tryRelToFile = path.resolve(path.dirname(currentFilePath), target);
+	if (fs.existsSync(tryRelToFile)) {
+		const rel = path.relative(docsRoot, tryRelToFile).replace(/\\/g, "/");
+		if (!rel.startsWith("..")) {
+			return `/${rel}`;
+		}
+	}
+
+	const tryRelToRoot = path.resolve(docsRoot, target);
+	if (fs.existsSync(tryRelToRoot)) {
+		return `/${path.relative(docsRoot, tryRelToRoot).replace(/\\/g, "/")}`;
+	}
+
+	return target.startsWith("/") ? target : `/${target}`;
+}
+
+/**
+ * Resolve any wikilinks found inside a raw markdown string (e.g. transcluded
+ * content) by replacing them with HTML anchor tags. Unresolvable links are
+ * left as their original raw text.
+ */
+function resolveWikilinksInText(
+	text: string,
+	currentPage: ContentPage,
+	index: ContentIndex,
+	options: Pick<
+		NormalizedPluginOptions,
+		"enableFuzzyMatching" | "enableCaseInsensitiveLookup"
+	>,
+): string {
+	const matches = findWikilinkMatches(text);
+	if (matches.length === 0) return text;
+
+	let result = "";
+	let cursor = 0;
+
+	for (const match of matches) {
+		if (match.start > cursor) {
+			result += text.slice(cursor, match.start);
+		}
+
+		const parsed = parseWikiLink(match.inner, match.fullMatch);
+		const resolved = resolveWikiLink(parsed, { currentPage, index, options });
+
+		if (resolved.status === "ok" && resolved.href && resolved.label) {
+			result += `<a href="${escapeHtmlAttribute(resolved.href)}">${escapeHtmlText(resolved.label)}</a>`;
+		} else {
+			result += match.fullMatch;
+		}
+
+		cursor = match.end;
+	}
+
+	if (cursor < text.length) {
+		result += text.slice(cursor);
+	}
+
+	return result;
+}
+
+/**
+ * Build the replacement AST nodes for an Obsidian callout.
+ * Foldable callouts (+ expanded, - collapsed) use <details>/<summary>.
+ * Static callouts use <div> elements.
+ */
+function buildCalloutNodes(
+	calloutType: string,
+	calloutTitle: string,
+	icon: string,
+	foldState: string | undefined,
+	contentChildren: Root["children"],
+): Root["children"] {
+	const escapedType = escapeHtmlAttribute(calloutType);
+	const escapedTitle = escapeHtmlText(calloutTitle);
+
+	if (foldState) {
+		const openAttr = foldState === "+" ? " open" : "";
+		const openTag: HTML = {
+			type: "html",
+			value: `<details class="callout callout-${escapedType}"${openAttr}>`,
+		};
+		const summaryTag: HTML = {
+			type: "html",
+			value: `<summary class="callout-title">${icon} ${escapedTitle}</summary>`,
+		};
+
+		if (contentChildren.length > 0) {
+			return [
+				openTag,
+				summaryTag,
+				{ type: "html", value: '<div class="callout-content">' },
+				...contentChildren,
+				{ type: "html", value: "</div></details>" },
+			];
+		}
+
+		return [
+			openTag,
+			summaryTag,
+			{ type: "html", value: '<div class="callout-content"></div></details>' },
+		];
+	}
+
+	const openDiv: HTML = {
+		type: "html",
+		value: `<div class="callout callout-${escapedType}">`,
+	};
+	const titleDiv: HTML = {
+		type: "html",
+		value: `<div class="callout-title">${icon} ${escapedTitle}</div>`,
+	};
+
+	if (contentChildren.length > 0) {
+		return [
+			openDiv,
+			titleDiv,
+			{ type: "html", value: '<div class="callout-content">' },
+			...contentChildren,
+			{ type: "html", value: "</div></div>" },
+		];
+	}
+
+	return [
+		openDiv,
+		titleDiv,
+		{ type: "html", value: '<div class="callout-content"></div></div>' },
+	];
+}
+
 function stripFrontmatter(content: string): string {
 	if (!content.startsWith("---")) return content;
 	const end = content.indexOf("\n---", 3);
@@ -483,6 +677,8 @@ function extractHeadingSection(
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i] ?? "";
+
+		// ATX heading: ## Heading text
 		const atxMatch = line.match(/^(#{1,6})\s+(.+?)(?:\s+#+)?$/);
 		if (atxMatch) {
 			const level = (atxMatch[1] ?? "").length;
@@ -492,11 +688,27 @@ function extractHeadingSection(
 					startLine = i;
 					startLevel = level;
 				}
-			} else {
-				if (level <= startLevel) {
-					return lines.slice(startLine, i).join("\n").trim();
-				}
+			} else if (level <= startLevel) {
+				return lines.slice(startLine, i).join("\n").trim();
 			}
+			continue;
+		}
+
+		// Setext heading: text on line i, underline (=== or ---) on line i+1
+		const nextLine = lines[i + 1] ?? "";
+		const setextUnderline = nextLine.match(/^\s*(=+|-+)\s*$/);
+		if (setextUnderline && line.trim().length > 0) {
+			const level = (setextUnderline[1] ?? "").startsWith("=") ? 1 : 2;
+			const title = line.trim().toLowerCase();
+			if (startLine === -1) {
+				if (title === normalizedTarget) {
+					startLine = i;
+					startLevel = level;
+				}
+			} else if (level <= startLevel) {
+				return lines.slice(startLine, i).join("\n").trim();
+			}
+			i += 1; // skip underline
 		}
 	}
 

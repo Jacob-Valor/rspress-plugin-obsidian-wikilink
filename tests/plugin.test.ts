@@ -20,6 +20,12 @@ const aliasAmbiguousFixtureRoot = path.resolve(
 	process.cwd(),
 	"tests/fixtures/alias-ambiguous",
 );
+const inlineBlocksFixtureRoot = path.resolve(
+	process.cwd(),
+	"tests/fixtures/inline-blocks",
+);
+const tagsFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/tags");
+const setextFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/setext");
 
 const DEFAULT_OPTIONS: NormalizedPluginOptions = {
 	onBrokenLink: "error",
@@ -31,6 +37,8 @@ const DEFAULT_OPTIONS: NormalizedPluginOptions = {
 	enableBacklinks: false,
 	enableTransclusion: false,
 	enableMediaEmbeds: false,
+	enableTagPages: false,
+	enableDefaultStyles: false,
 };
 
 function makeProcessor(
@@ -527,5 +535,261 @@ describe("case-insensitive lookup", () => {
 		});
 
 		expect(String(file)).toBe("Go to [CaseSensitive](/guide/CaseSensitive).\n");
+	});
+});
+
+describe("inline block ID indexing", () => {
+	test("indexes standalone block IDs", async () => {
+		const index = await buildContentIndex(inlineBlocksFixtureRoot);
+		const page = index.byPathKey.get("guide/inline-target");
+
+		expect(page?.blocks.map((b) => b.id)).toContain("standalone-block");
+	});
+
+	test("indexes inline block IDs appended to paragraph text", async () => {
+		const index = await buildContentIndex(inlineBlocksFixtureRoot);
+		const page = index.byPathKey.get("guide/inline-target");
+
+		expect(page?.blocks.map((b) => b.id)).toContain("inline-block");
+	});
+
+	test("resolves wikilink to an inline block ID", async () => {
+		const index = await buildContentIndex(inlineBlocksFixtureRoot);
+		const currentPage = index.byPathKey.get("")!;
+
+		const result = resolveWikiLink(
+			parseWikiLink(
+				"guide/inline-target#^inline-block",
+				"[[guide/inline-target#^inline-block]]",
+			),
+			{ currentPage, index },
+		);
+
+		expect(result).toMatchObject({
+			status: "ok",
+			href: "/guide/inline-target#^inline-block",
+		});
+	});
+});
+
+describe("frontmatter tags", () => {
+	test("indexes tags from frontmatter", async () => {
+		const index = await buildContentIndex(tagsFixtureRoot);
+		const page = index.byPathKey.get("guide/tagged-page");
+
+		expect(page?.tags).toEqual(["tutorial", "obsidian"]);
+	});
+
+	test("builds byTag lookup map", async () => {
+		const index = await buildContentIndex(tagsFixtureRoot);
+
+		expect(index.byTag.get("tutorial")?.[0]?.pathKey).toBe("guide/tagged-page");
+		expect(index.byTag.get("obsidian")?.[0]?.pathKey).toBe("guide/tagged-page");
+	});
+});
+
+describe("backlinks caching", () => {
+	test("returns the same map object on repeated calls with same index", async () => {
+		const { getCachedBacklinksIndex } = await import("../src/backlinks");
+		const index = await buildContentIndex(fixtureRoot);
+
+		const first = await getCachedBacklinksIndex(index);
+		const second = await getCachedBacklinksIndex(index);
+
+		expect(second).toBe(first);
+	});
+});
+
+describe("tag regex", () => {
+	test("rewrites word tags", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableTagLinking: true });
+		const file = await processor.process({
+			value: "See #tutorial and #my-tag.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		expect(String(file)).toContain("[#tutorial](/tags/tutorial)");
+		expect(String(file)).toContain("[#my-tag](/tags/my-tag)");
+	});
+
+	test("does not rewrite purely numeric tags (e.g. issue numbers)", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableTagLinking: true });
+		const file = await processor.process({
+			value: "See issue #123 and PR #456.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		// Pure-numeric strings after # are not valid Obsidian tags
+		expect(output).not.toContain("/tags/123");
+		expect(output).not.toContain("/tags/456");
+	});
+
+	test("does not rewrite tags inside URL fragments", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableTagLinking: true });
+		const file = await processor.process({
+			value: "See https://example.com/page#section for details.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		// URL fragment preceded by a word char — should not be rewritten
+		expect(output).not.toContain("/tags/section");
+	});
+});
+
+describe("callout foldable state", () => {
+	test("renders static callout as div", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!note] Title\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('<div class="callout callout-note">');
+		expect(output).not.toContain("<details");
+	});
+
+	test("renders collapsed callout (-) as closed details element", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!note]- Collapsed\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('<details class="callout callout-note">');
+		expect(output).toContain("<summary");
+		expect(output).not.toContain("open");
+	});
+
+	test("renders expanded callout (+) as open details element", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!tip]+ Expanded\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('<details class="callout callout-tip" open>');
+		expect(output).toContain("<summary");
+	});
+});
+
+describe("Obsidian comment stripping", () => {
+	test("strips inline %% comments %% from text", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "Before %% hidden comment %% after.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).not.toContain("hidden comment");
+		expect(output).toContain("Before");
+		expect(output).toContain("after.");
+	});
+
+	test("strips multi-line block %% comments %%", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "%%\nprivate draft content\n%%",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).not.toContain("private draft content");
+	});
+
+	test("leaves non-comment text untouched", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "Normal text with no comments.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		expect(String(file)).toContain("Normal text with no comments.");
+	});
+});
+
+describe("callout type aliases", () => {
+	test("maps 'summary' alias to abstract icon", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!summary] Title\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain("callout-abstract");
+	});
+
+	test("maps 'done' alias to success icon", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!done] Title\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		expect(String(file)).toContain("callout-success");
+	});
+
+	test("maps 'fail' alias to failure type", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!fail] Title\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		expect(String(file)).toContain("callout-failure");
+	});
+
+	test("maps 'attention' alias to caution type", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!attention] Title\n> Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		expect(String(file)).toContain("callout-caution");
+	});
+});
+
+describe("setext heading transclusion", () => {
+	test("transclubes a setext H1 section", async () => {
+		const processor = makeProcessor(setextFixtureRoot, {
+			enableTransclusion: true,
+		});
+		const file = await processor.process({
+			value: "![[guide/setext-page#Install]]",
+			path: path.resolve(setextFixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="obsidian-transclusion"');
+		expect(output).toContain("Install steps here");
+		expect(output).not.toContain("Introduction content");
+	});
+
+	test("transclubes a setext H2 section", async () => {
+		const processor = makeProcessor(setextFixtureRoot, {
+			enableTransclusion: true,
+		});
+		const file = await processor.process({
+			value: "![[guide/setext-page#Advanced]]",
+			path: path.resolve(setextFixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain("Advanced content here");
+		expect(output).not.toContain("Install steps here");
+	});
+});
+
+describe("tag page generation", () => {
+	test("generateTagPages produces one page per unique tag", async () => {
+		const { generateTagPages } = await import("../src/tag-pages");
+		const index = await buildContentIndex(tagsFixtureRoot);
+		const pages = generateTagPages(index);
+
+		const routes = pages.map((p) => p.routePath);
+		expect(routes).toContain("/tags/tutorial");
+		expect(routes).toContain("/tags/obsidian");
+	});
+
+	test("generated tag page lists pages with that tag", async () => {
+		const { generateTagPages } = await import("../src/tag-pages");
+		const index = await buildContentIndex(tagsFixtureRoot);
+		const pages = generateTagPages(index);
+
+		const tutorialPage = pages.find((p) => p.routePath === "/tags/tutorial");
+		expect(tutorialPage?.content).toContain("Tagged Guide");
+		expect(tutorialPage?.content).toContain("/guide/tagged-page");
 	});
 });
