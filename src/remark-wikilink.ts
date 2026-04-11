@@ -199,24 +199,26 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 		}
 
 		if (options.enableMediaEmbeds || options.enableTransclusion) {
-			unistVisit(tree, "text", (node, position, parent) => {
-				if (!parent || typeof position !== "number") {
-					return;
-				}
+			// Two-pass approach: collect nodes to process, then resolve async
+			interface EmbedWork {
+				node: Text;
+			}
+			const embedNodes: EmbedWork[] = [];
 
-				if (SKIP_PARENT_TYPES.has(parent.type)) {
-					return;
+			unistVisit(tree, "text", (node, _position, parent) => {
+				if (!parent || SKIP_PARENT_TYPES.has(parent.type)) return;
+				if (!node.value.includes("![[")) return;
+				const embedMatches = [...node.value.matchAll(WIKILINK_EMBED_PATTERN)];
+				if (embedMatches.length > 0) {
+					embedNodes.push({ node });
 				}
+			});
 
+			// Process all embed nodes with proper async file reads
+			for (const { node } of embedNodes) {
 				const text = node.value;
-				if (!text.includes("![[")) {
-					return;
-				}
-
 				const embedMatches = [...text.matchAll(WIKILINK_EMBED_PATTERN)];
-				if (embedMatches.length === 0) {
-					return;
-				}
+				if (embedMatches.length === 0) continue;
 
 				let result = "";
 				let lastEnd = 0;
@@ -238,14 +240,15 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 
 					if (options.enableMediaEmbeds && IMAGE_EXTS.has(ext)) {
 						const sizeAttr = parseSizeAttr(sizeParam);
-						result += `<img src="${target}" alt="${target}"${sizeAttr} loading="lazy" />`;
+						const escapedTarget = escapeHtmlAttribute(target);
+						result += `<img src="${escapedTarget}" alt="${escapedTarget}"${sizeAttr} loading="lazy" />`;
 					} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
-						result += `<audio controls src="${target}"></audio>`;
+						result += `<audio controls src="${escapeHtmlAttribute(target)}"></audio>`;
 					} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
 						const sizeAttr = parseSizeAttr(sizeParam);
-						result += `<video controls src="${target}"${sizeAttr}></video>`;
+						result += `<video controls src="${escapeHtmlAttribute(target)}"${sizeAttr}></video>`;
 					} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
-						result += `<iframe src="${target}" width="100%" height="600px" frameborder="0"></iframe>`;
+						result += `<iframe src="${escapeHtmlAttribute(target)}" width="100%" height="600px" frameborder="0"></iframe>`;
 					} else if (options.enableTransclusion) {
 						const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
 							currentPage,
@@ -255,7 +258,7 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 
 						if (resolved.status === "ok" && resolved.targetPage) {
 							try {
-								const content = fs.readFileSync(
+								const content = await fs.promises.readFile(
 									resolved.targetPage.absolutePath,
 									"utf-8",
 								);
@@ -280,7 +283,7 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 									transcludedContent = stripFrontmatter(content);
 								}
 
-								result += `<div class="obsidian-transclusion" data-src="${resolved.href}">\n${transcludedContent}\n</div>`;
+								result += `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedContent}\n</div>`;
 							} catch {
 								result += fullMatch;
 							}
@@ -299,7 +302,7 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 				}
 
 				node.value = result;
-			});
+			}
 		}
 
 		unistVisit(tree, "text", (node, position, parent) => {

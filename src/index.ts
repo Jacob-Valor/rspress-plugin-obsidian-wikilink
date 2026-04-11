@@ -8,11 +8,26 @@ import type {
 	RspressPluginObsidianWikiLinkOptions,
 } from "./types.ts";
 
+export type { BacklinkRef } from "./backlinks.ts";
 export { buildBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
 export { buildContentIndex, getCachedContentIndex } from "./content-index.ts";
 export { findWikilinkMatches, parseWikiLink } from "./parse-wikilink.ts";
 export { resolveWikiLink } from "./resolve-wikilink.ts";
-export type { RspressPluginObsidianWikiLinkOptions } from "./types.ts";
+export type {
+	BlockEntry,
+	ContentIndex,
+	ContentPage,
+	DiagnosticMode,
+	HeadingEntry,
+	NormalizedPluginOptions,
+	ParsedWikiLink,
+	ResolveContext,
+	ResolvedWikiLink,
+	ResolveStatus,
+	RspressPluginObsidianWikiLinkOptions,
+	WikilinkMatch,
+	WikiSubpath,
+} from "./types.ts";
 
 function normalizePluginOptions(
 	options: RspressPluginObsidianWikiLinkOptions = {},

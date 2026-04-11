@@ -281,18 +281,7 @@ function resolveFuzzyPage(
 		return undefined;
 	}
 
-	const caseInsensitivePathMatches = context.index.pages.filter(
-		(page) => normalizeFuzzyLookup(page.pathKey) === normalizedTarget,
-	);
-	const exactInsensitiveResolution = resolveCandidateSet(
-		caseInsensitivePathMatches,
-		target,
-		"a path-qualified link",
-	);
-	if (exactInsensitiveResolution) {
-		return exactInsensitiveResolution;
-	}
-
+	// Find all pages matching by case-insensitive path or path suffix
 	const suffixMatches = context.index.pages.filter((page) => {
 		const normalizedPagePath = normalizeFuzzyLookup(page.pathKey);
 		return (

@@ -107,11 +107,7 @@ function scanMarkdownFiles(rootDir: string): MarkdownFileEntry[] {
 			const absolutePath = path.join(currentDir, entry.name);
 
 			if (entry.isDirectory()) {
-				if (
-					entry.name === ".git" ||
-					entry.name === "node_modules" ||
-					entry.name.startsWith(".")
-				) {
+				if (entry.name === "node_modules" || entry.name.startsWith(".")) {
 					continue;
 				}
 

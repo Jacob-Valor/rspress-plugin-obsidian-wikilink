@@ -7,6 +7,7 @@ import { buildContentIndex, getCachedContentIndex } from "../src/content-index";
 import { findWikilinkMatches, parseWikiLink } from "../src/parse-wikilink";
 import { remarkWikilink } from "../src/remark-wikilink";
 import { resolveWikiLink } from "../src/resolve-wikilink";
+import type { NormalizedPluginOptions } from "../src/types";
 
 const fixtureRoot = path.resolve(process.cwd(), "tests/fixtures/basic");
 const strictFixtureRoot = path.resolve(process.cwd(), "tests/fixtures/strict");
@@ -19,6 +20,31 @@ const aliasAmbiguousFixtureRoot = path.resolve(
 	process.cwd(),
 	"tests/fixtures/alias-ambiguous",
 );
+
+const DEFAULT_OPTIONS: NormalizedPluginOptions = {
+	onBrokenLink: "error",
+	onAmbiguousLink: "error",
+	enableFuzzyMatching: false,
+	enableCaseInsensitiveLookup: false,
+	enableTagLinking: false,
+	enableCallouts: false,
+	enableBacklinks: false,
+	enableTransclusion: false,
+	enableMediaEmbeds: false,
+};
+
+function makeProcessor(
+	docsRoot: string,
+	optionOverrides: Partial<NormalizedPluginOptions> = {},
+) {
+	return unified()
+		.use(remarkParse)
+		.use(remarkWikilink, {
+			getDocsRoot: () => docsRoot,
+			options: { ...DEFAULT_OPTIONS, ...optionOverrides },
+		})
+		.use(remarkStringify);
+}
 
 describe("parseWikiLink", () => {
 	test("parses alias and anchor", () => {
@@ -360,23 +386,7 @@ describe("resolveWikiLink", () => {
 
 describe("remarkWikilink", () => {
 	test("rewrites wikilinks into markdown links", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: false,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(fixtureRoot);
 
 		const file = await processor.process({
 			value: "Go to [[guide/getting-started#Install|Install guide]].",
@@ -389,23 +399,7 @@ describe("remarkWikilink", () => {
 	});
 
 	test("supports current-page anchors", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: false,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(fixtureRoot);
 
 		const file = await processor.process({
 			value: "Jump to [[#Overview]].",
@@ -416,23 +410,7 @@ describe("remarkWikilink", () => {
 	});
 
 	test("rewrites block references into markdown links", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: false,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(fixtureRoot);
 
 		const file = await processor.process({
 			value: "Jump to [[guide/getting-started#^install-block]].",
@@ -445,23 +423,7 @@ describe("remarkWikilink", () => {
 	});
 
 	test("rewrites embeds into embed html anchors", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: false,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(fixtureRoot);
 
 		const file = await processor.process({
 			value: "![[guide/getting-started#Install|Install guide]]",
@@ -475,31 +437,10 @@ describe("remarkWikilink", () => {
 });
 
 describe("transclusion", () => {
-	function makeProcessor(
-		opts: Partial<Parameters<typeof remarkWikilink>[0]["options"]> = {},
-	) {
-		return unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: false,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: true,
-					enableMediaEmbeds: false,
-					...opts,
-				},
-			})
-			.use(remarkStringify);
-	}
-
 	test("transclubes full page content", async () => {
-		const processor = makeProcessor();
+		const processor = makeProcessor(fixtureRoot, {
+			enableTransclusion: true,
+		});
 		const file = await processor.process({
 			value: "![[guide/getting-started]]",
 			path: path.resolve(fixtureRoot, "index.md"),
@@ -510,7 +451,9 @@ describe("transclusion", () => {
 	});
 
 	test("transclubes heading section only", async () => {
-		const processor = makeProcessor();
+		const processor = makeProcessor(fixtureRoot, {
+			enableTransclusion: true,
+		});
 		const file = await processor.process({
 			value: "![[guide/getting-started#Install]]",
 			path: path.resolve(fixtureRoot, "index.md"),
@@ -522,7 +465,9 @@ describe("transclusion", () => {
 	});
 
 	test("transclubes block reference only", async () => {
-		const processor = makeProcessor();
+		const processor = makeProcessor(fixtureRoot, {
+			enableTransclusion: true,
+		});
 		const file = await processor.process({
 			value: "![[guide/getting-started#^install-block]]",
 			path: path.resolve(fixtureRoot, "index.md"),
@@ -535,23 +480,9 @@ describe("transclusion", () => {
 
 describe("tag linking", () => {
 	test("rewrites tags into markdown links", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: true,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(fixtureRoot, {
+			enableTagLinking: true,
+		});
 
 		const file = await processor.process({
 			value: "See #tag and #other_tag.",
@@ -566,23 +497,9 @@ describe("tag linking", () => {
 
 describe("callouts", () => {
 	test("rewrites obsidian callouts into callout html", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => fixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: false,
-					enableTagLinking: false,
-					enableCallouts: true,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(fixtureRoot, {
+			enableCallouts: true,
+		});
 
 		const file = await processor.process({
 			value: "> [!tip] Pro Tip\n> Body text",
@@ -600,23 +517,9 @@ describe("callouts", () => {
 
 describe("case-insensitive lookup", () => {
 	test("forwards case-insensitive lookup option through remark resolution", async () => {
-		const processor = unified()
-			.use(remarkParse)
-			.use(remarkWikilink, {
-				getDocsRoot: () => strictFixtureRoot,
-				options: {
-					onBrokenLink: "error",
-					onAmbiguousLink: "error",
-					enableFuzzyMatching: false,
-					enableCaseInsensitiveLookup: true,
-					enableTagLinking: false,
-					enableCallouts: false,
-					enableBacklinks: false,
-					enableTransclusion: false,
-					enableMediaEmbeds: false,
-				},
-			})
-			.use(remarkStringify);
+		const processor = makeProcessor(strictFixtureRoot, {
+			enableCaseInsensitiveLookup: true,
+		});
 
 		const file = await processor.process({
 			value: "Go to [[guide/casesensitive]].",
