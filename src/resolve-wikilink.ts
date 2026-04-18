@@ -13,6 +13,20 @@ import type {
 } from "./types.ts";
 import { normalizePathKey } from "./utils.ts";
 
+/**
+ * Resolve a parsed wikilink against the content index, returning a
+ * {@link ResolvedWikiLink} with either an `href` + `label` on success or
+ * a diagnostic status + `message` on failure.
+ *
+ * Resolution order for non-current-page links:
+ * 1. Exact path match
+ * 2. Unique basename match
+ * 3. Unique frontmatter title or alias match
+ * 4. Case-insensitive path fallback (opt-in via
+ *    {@link NormalizedPluginOptions.enableCaseInsensitiveLookup})
+ * 5. Shortest-suffix fuzzy match (opt-in via
+ *    {@link NormalizedPluginOptions.enableFuzzyMatching})
+ */
 export function resolveWikiLink(
 	parsed: ParsedWikiLink,
 	context: ResolveContext,
@@ -59,6 +73,18 @@ export function resolveWikiLink(
 		return metadataResolution.kind === "resolved"
 			? resolveAgainstPage(metadataResolution.page, parsed)
 			: metadataResolution.result;
+	}
+
+	if (context.options?.enableCaseInsensitiveLookup) {
+		const caseInsensitiveResolution = resolveCaseInsensitivePage(
+			context,
+			parsed.target,
+		);
+		if (caseInsensitiveResolution) {
+			return caseInsensitiveResolution.kind === "resolved"
+				? resolveAgainstPage(caseInsensitiveResolution.page, parsed)
+				: caseInsensitiveResolution.result;
+		}
 	}
 
 	if (context.options?.enableFuzzyMatching) {
@@ -174,6 +200,25 @@ function resolveHeadingSlug(
 		}
 	}
 
+	// Fallback: try matching raw anchor text (with emoji) against heading slugs
+	// Obsidian may preserve emoji in IDs, but github-slugger strips them
+	const slugifiedRaw = slugifyHeading(anchor);
+	for (const heading of page.headings) {
+		if (
+			heading.slug === slugifiedRaw ||
+			heading.slug.startsWith(`${slugifiedRaw}-`)
+		) {
+			return heading.explicitId ?? heading.slug;
+		}
+	}
+
+	// Fallback: try case-insensitive match on raw text (for Unicode headings)
+	for (const heading of page.headings) {
+		if (heading.rawText.toLowerCase().includes(anchor.toLowerCase())) {
+			return heading.explicitId ?? heading.slug;
+		}
+	}
+
 	return undefined;
 }
 
@@ -269,18 +314,7 @@ function resolveFuzzyPage(
 		return undefined;
 	}
 
-	const caseInsensitivePathMatches = context.index.pages.filter(
-		(page) => normalizeFuzzyLookup(page.pathKey) === normalizedTarget,
-	);
-	const exactInsensitiveResolution = resolveCandidateSet(
-		caseInsensitivePathMatches,
-		target,
-		"a path-qualified link",
-	);
-	if (exactInsensitiveResolution) {
-		return exactInsensitiveResolution;
-	}
-
+	// Find all pages matching by case-insensitive path or path suffix
 	const suffixMatches = context.index.pages.filter((page) => {
 		const normalizedPagePath = normalizeFuzzyLookup(page.pathKey);
 		return (
@@ -317,6 +351,37 @@ function resolveFuzzyPage(
 		kind: "resolved",
 		page: bestMatch,
 	};
+}
+
+function resolveCaseInsensitivePage(
+	context: ResolveContext,
+	target: string,
+):
+	| { kind: "resolved"; page: ContentPage }
+	| { kind: "result"; result: ResolvedWikiLink }
+	| undefined {
+	const normalizedTarget = normalizePathKey(target).toLowerCase();
+	if (!normalizedTarget) {
+		return undefined;
+	}
+
+	const pathMatches = context.index.pages.filter(
+		(page) => page.pathKey.toLowerCase() === normalizedTarget,
+	);
+	const pathResolution = resolveCandidateSet(
+		pathMatches,
+		target,
+		"a more specific path",
+	);
+	if (pathResolution) {
+		return pathResolution;
+	}
+
+	const baseName = path.basename(normalizedTarget);
+	const baseMatches = context.index.pages.filter(
+		(page) => page.baseName.toLowerCase() === baseName,
+	);
+	return resolveCandidateSet(baseMatches, target, "a path-qualified link");
 }
 
 function normalizeFuzzyLookup(input: string): string {

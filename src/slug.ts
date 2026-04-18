@@ -10,10 +10,19 @@ export function stripMarkdownFormatting(input: string): string {
 		.trim();
 }
 
+/**
+ * Slugify a heading for anchor generation.
+ *
+ * Uses a fresh GithubSlugger instance to produce a deterministic slug
+ * without counter suffixes (each call is independent).
+ */
 export function slugifyHeading(input: string): string {
-	const slugger = new GithubSlugger();
-	return slugger.slug(stripMarkdownFormatting(input));
+	sluggerInstance.reset();
+	return sluggerInstance.slug(stripMarkdownFormatting(input));
 }
+
+/** Shared slugger instance, reset before each use to avoid allocation. */
+const sluggerInstance = new GithubSlugger();
 
 export function normalizeLookupValue(input: string): string {
 	return input.trim().replace(/\s+/g, " ").toLowerCase();

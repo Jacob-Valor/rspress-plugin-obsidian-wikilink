@@ -2,6 +2,11 @@ import type { ParsedWikiLink, WikilinkMatch } from "./types.ts";
 
 const WIKILINK_PATTERN = /!?\[\[([^[\]]+?)\]\]/g;
 
+/**
+ * Find every `[[...]]` and `![[...]]` occurrence in `input`, returning their
+ * positions and raw contents. Does not parse the inner target/alias/anchor
+ * structure — use {@link parseWikiLink} for that.
+ */
 export function findWikilinkMatches(input: string): WikilinkMatch[] {
 	const matches: WikilinkMatch[] = [];
 
@@ -25,6 +30,14 @@ export function findWikilinkMatches(input: string): WikilinkMatch[] {
 	return matches;
 }
 
+/**
+ * Parse the inner body of a single wikilink into its constituent pieces.
+ *
+ * @param inner - The text between `[[` and `]]` (without delimiters).
+ * @param raw - The full original match (e.g. `[[Page#Heading|Alias]]` or
+ *   `![[image.png|300x200]]`), used to detect the embed prefix and to round-trip
+ *   the source verbatim when resolution fails.
+ */
 export function parseWikiLink(inner: string, raw: string): ParsedWikiLink {
 	const isEmbed = raw.startsWith("![[");
 	const pipeIndex = inner.indexOf("|");
