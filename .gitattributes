@@ -1,0 +1,4 @@
+.agents/** linguist-vendored
+.claude/** linguist-vendored
+dist/** linguist-generated
+doc_build/** linguist-generated
