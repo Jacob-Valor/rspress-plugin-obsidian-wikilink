@@ -44,7 +44,12 @@ export async function buildBacklinksIndex(
 		let content: string;
 		try {
 			content = await fs.promises.readFile(page.absolutePath, "utf-8");
-		} catch {
+		} catch (error) {
+			if (process.env.NODE_ENV !== "production") {
+				console.warn(
+					`[rspress-plugin-obsidian-wikilink:backlinks] Skipped ${page.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
 			continue;
 		}
 
@@ -136,6 +141,12 @@ function addBacklink(
 	}
 }
 
+/**
+ * Render a backlinks panel as raw HTML. Returns the empty string when
+ * there are no refs so the caller can unconditionally append the result.
+ * The output is wrapped in `<div class="obsidian-backlinks">` and uses the
+ * `.obsidian-backlinks` selectors in the bundled stylesheet.
+ */
 export function renderBacklinksHtml(refs: BacklinkRef[]): string {
 	if (refs.length === 0) return "";
 	const items = refs

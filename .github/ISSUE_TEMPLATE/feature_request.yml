@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new feature or Obsidian syntax to support
+title: "[feat]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. Please check the README's "Features" table first — your idea may already be supported via an opt-in flag.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is the user problem this feature would solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        Include:
+        - The Obsidian markdown syntax (if any) that would be recognized
+        - The expected HTML / routing output
+        - The `NormalizedPluginOptions` flag that should gate the feature (should default to `false`)
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: obsidian-reference
+    attributes:
+      label: Obsidian reference
+      description: Link to the relevant Obsidian Help page or forum thread documenting the behavior you want replicated

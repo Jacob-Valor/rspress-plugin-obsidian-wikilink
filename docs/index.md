@@ -23,13 +23,13 @@ features:
     details: Embed images, videos, audio, and PDFs with optional size parameters.
     icon: 🖼️
   - title: Callouts
-    details: Transform > [!note] syntax into styled callout components.
+    details: Transform > [!note] syntax into styled callout components with foldable support.
     icon: 💡
-  - title: Tag Linking
-    details: "Convert #tags into proper links to tag pages."
+  - title: Tags & Backlinks
+    details: "Convert #tags into links, auto-generate tag index pages, and backlinks panels."
     icon: 🏷️
-  - title: Backlinks
-    details: Auto-generate backlinks panel showing which pages link to the current page.
-    icon: 🔙
+  - title: Full Obsidian Syntax
+    details: Comments (%%), highlights (==text==), footnotes, and all frontmatter fields.
+    icon: ✨
 ---
 

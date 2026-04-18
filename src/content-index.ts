@@ -23,6 +23,12 @@ interface MarkdownFileEntry {
 	size: number;
 }
 
+/**
+ * Scan `rootDir` for `.md`/`.mdx` files and build a fresh {@link ContentIndex}
+ * with pre-computed lookup tables (by path, basename, title, alias, tag).
+ * Always bypasses the module-level cache — prefer {@link getCachedContentIndex}
+ * for repeated builds.
+ */
 export async function buildContentIndex(
 	rootDir: string,
 ): Promise<ContentIndex> {
@@ -31,6 +37,11 @@ export async function buildContentIndex(
 	return buildContentIndexFromFiles(absoluteRoot, files);
 }
 
+/**
+ * Like {@link buildContentIndex} but memoized on a per-root basis. The cache
+ * is invalidated whenever the set of markdown files, their mtimes, or sizes
+ * change — safe for Rspress dev-server file-watching.
+ */
 export async function getCachedContentIndex(
 	rootDir: string,
 ): Promise<ContentIndex> {
@@ -82,6 +93,12 @@ async function buildContentIndexFromFiles(
 
 		for (const tag of page.tags) {
 			pushNamedPage(byTag, tag, page);
+			// For nested tags like "parent/child/leaf", also aggregate into
+			// each ancestor segment so byTag["parent"] includes the page too.
+			const parts = tag.split("/");
+			for (let depth = 1; depth < parts.length; depth++) {
+				pushNamedPage(byTag, parts.slice(0, depth).join("/"), page);
+			}
 		}
 	}
 
@@ -161,7 +178,8 @@ async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
 	const routePath = deriveRoutePath(file.relativePath);
 	const pathKey = normalizePathKey(file.relativePath);
 	const baseName = path.basename(pathKey);
-	const { title, aliases, tags } = extractFrontmatterMetadata(markdown);
+	const { title, aliases, tags, cssclasses, excerpt } =
+		extractFrontmatterMetadata(markdown);
 	const headings = extractHeadings(markdown);
 	const blocks = extractBlocks(markdown);
 
@@ -174,6 +192,8 @@ async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
 		title,
 		aliases,
 		tags,
+		cssclasses,
+		excerpt,
 		headings,
 		blocks,
 	};
@@ -330,36 +350,46 @@ function extractFrontmatterMetadata(markdown: string): {
 	title?: string;
 	aliases: string[];
 	tags: string[];
+	cssclasses: string[];
+	excerpt?: string;
 } {
 	const lines = markdown.split(/\r?\n/);
 	if (lines[0]?.trim() !== "---") {
-		return { aliases: [], tags: [] };
+		return { aliases: [], tags: [], cssclasses: [] };
 	}
 
 	const closingIndex = lines.findIndex(
 		(line, index) => index > 0 && line.trim() === "---",
 	);
 	if (closingIndex < 0) {
-		return { aliases: [], tags: [] };
+		return { aliases: [], tags: [], cssclasses: [] };
 	}
 
 	let title: string | undefined;
+	let excerpt: string | undefined;
 	const aliases: string[] = [];
 	const tags: string[] = [];
-	let pendingListKey: "aliases" | "tags" | undefined;
+	const cssclasses: string[] = [];
+	let pendingListKey: "aliases" | "tags" | "cssclasses" | undefined;
 
 	for (let index = 1; index < closingIndex; index += 1) {
 		const line = lines[index] ?? "";
 
-		if (pendingListKey === "aliases" || pendingListKey === "tags") {
+		if (
+			pendingListKey === "aliases" ||
+			pendingListKey === "tags" ||
+			pendingListKey === "cssclasses"
+		) {
 			const listItemMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
 			if (listItemMatch?.[1]) {
 				const itemValue = stripWrappingQuotes(listItemMatch[1].trim());
 				if (itemValue) {
 					if (pendingListKey === "aliases") {
 						aliases.push(itemValue);
-					} else {
+					} else if (pendingListKey === "tags") {
 						tags.push(itemValue);
+					} else {
+						cssclasses.push(itemValue);
 					}
 				}
 				continue;
@@ -394,6 +424,11 @@ function extractFrontmatterMetadata(markdown: string): {
 			continue;
 		}
 
+		if (key === "excerpt") {
+			excerpt = stripWrappingQuotes(value) || undefined;
+			continue;
+		}
+
 		if (key === "aliases" || key === "alias") {
 			if (value.length === 0) {
 				pendingListKey = "aliases";
@@ -413,13 +448,26 @@ function extractFrontmatterMetadata(markdown: string): {
 			for (const tag of parseInlineAliases(value)) {
 				tags.push(tag);
 			}
+			continue;
+		}
+
+		if (key === "cssclasses" || key === "cssclass") {
+			if (value.length === 0) {
+				pendingListKey = "cssclasses";
+				continue;
+			}
+			for (const cls of parseInlineAliases(value)) {
+				cssclasses.push(cls);
+			}
 		}
 	}
 
 	return {
 		title,
+		excerpt,
 		aliases: [...new Set(aliases)],
 		tags: [...new Set(tags)],
+		cssclasses: [...new Set(cssclasses)],
 	};
 }
 

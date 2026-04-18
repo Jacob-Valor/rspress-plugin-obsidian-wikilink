@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Rspress documentation
+    url: https://rspress.rs/
+    about: For questions about Rspress itself (not this plugin)
+  - name: Obsidian community
+    url: https://forum.obsidian.md/
+    about: For questions about Obsidian markdown syntax

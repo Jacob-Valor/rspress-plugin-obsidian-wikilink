@@ -19,6 +19,9 @@ Obsidian-style wikilinks for Rspress. Write your docs in Obsidian, publish with 
 | `#tag` | Tag links (opt-in) |
 | `> [!note]` | Callouts with aliases + foldable state (opt-in) |
 | `%% comment %%` | Obsidian comments — stripped from output |
+| `==highlight==` | Text highlighting |
+| `[^1]` | Footnotes with definitions |
+| `- [ ] task` | Task lists (native Rspress) |
 | Backlinks panel | Auto-generated per page (opt-in) |
 
 The plugin rewrites wikilinks during the Rspress remark pipeline. All features are opt-in via configuration.
@@ -239,6 +242,44 @@ This entire paragraph is a private draft note.
 %%
 ```
 
+## Text Highlighting
+
+`==text==` is transformed to `<mark>` tags for highlighted text.
+
+```markdown
+This is ==highlighted text== in a sentence.
+```
+
+Output:
+```html
+This is <mark>highlighted text</mark> in a sentence.
+```
+
+## Footnotes
+
+Footnote references `[^1]` are converted to superscript links, with definitions rendered at the end of the page.
+
+```markdown
+This is a statement[^1] with a footnote.
+
+[^1]: This is the footnote definition.
+```
+
+Output:
+```html
+This is a statement<sup class="footnote-ref" id="fnref-1"><a href="#fn-1" title="This is the footnote definition.">1</a></sup> with a footnote.
+
+<hr />
+<ol class="footnotes">
+<li id="fn-1">This is the footnote definition. <a href="#fnref-1">↩</a></li>
+</ol>
+```
+
+Inline footnotes are also supported:
+```markdown
+Inline footnote^[This is inline] works differently.
+```
+
 ## Resolution rules
 
 Resolution order for `[[target]]`:
@@ -267,6 +308,68 @@ Supported heading formats: ATX, ATX with closing `#`, up to 3 leading spaces, se
 
 Supported block ID formats: standalone line (`^block-id`) and inline at end of paragraph (`text content ^block-id`)
 
+## Frontmatter support
+
+The plugin indexes and supports the following Obsidian frontmatter fields:
+
+### `title`
+
+Sets the page title for link resolution. Used for `[[Title]]` lookups.
+
+```yaml
+---
+title: My Custom Title
+---
+```
+
+### `aliases`
+
+Alternative names for link resolution. Supports list and inline array formats.
+
+```yaml
+---
+aliases:
+  - First Alias
+  - Second Alias
+---
+# or inline
+aliases: [First Alias, Second Alias]
+```
+
+### `tags`
+
+Tags for categorization and tag page generation.
+
+```yaml
+---
+tags:
+  - tutorial
+  - obsidian
+---
+```
+
+### `cssclasses`
+
+Custom CSS classes to apply to the page (available in `ContentPage.cssclasses`).
+
+```yaml
+---
+cssclasses:
+  - custom-layout
+  - dark-theme
+---
+```
+
+### `excerpt`
+
+Page excerpt/description for SEO (available in `ContentPage.excerpt`).
+
+```yaml
+---
+excerpt: A brief description of this page
+---
+```
+
 ## Development
 
 ```bash
@@ -276,15 +379,23 @@ bun install
 # Type checking
 bun run typecheck
 
+# Linting (Biome)
+bun run lint          # check only
+bun run lint:fix      # auto-fix
+bun run format:check  # formatting check (no writes)
+
 # Run tests
 bun test
+bun run test:coverage
 
-# Build
+# Build (cross-platform via scripts/build.ts)
 bun run build
 
 # Build docs
 bun run docs:build
 ```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, commit conventions, and feature guidelines.
 
 ## Package exports
 
@@ -297,6 +408,7 @@ Functions:
 - `getCachedBacklinksIndex`
 - `renderBacklinksHtml`
 - `generateTagPages`
+- `encodeTagPathSegment`
 - `parseWikiLink`
 - `findWikilinkMatches`
 - `resolveWikiLink`
@@ -315,6 +427,7 @@ Types:
 - `ResolvedWikiLink`
 - `ResolveContext`
 - `BacklinkRef`
+- `AdditionalPage`
 - And more — see `src/types.ts`
 
 ## License
@@ -323,4 +436,4 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 ## Status
 
-v0.1.x — ~95% Obsidian markdown feature coverage for static Rspress docs.
+v0.3.x — 100% Obsidian markdown feature coverage for static Rspress docs.

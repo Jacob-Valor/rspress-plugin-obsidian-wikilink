@@ -13,6 +13,8 @@ export default defineConfig({
 			enableBacklinks: true,
 			enableTransclusion: true,
 			enableMediaEmbeds: true,
+			enableTagPages: true,
+			enableDefaultStyles: true,
 		}),
 	],
 });

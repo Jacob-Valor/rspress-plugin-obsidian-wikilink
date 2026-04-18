@@ -15,6 +15,7 @@ import { getCachedBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
 import { getCachedContentIndex } from "./content-index.ts";
 import { findWikilinkMatches, parseWikiLink } from "./parse-wikilink.ts";
 import { resolveWikiLink } from "./resolve-wikilink.ts";
+import { encodeTagPathSegment } from "./tag-pages.ts";
 import type {
 	ContentIndex,
 	ContentPage,
@@ -26,11 +27,19 @@ import { normalizeFsPath } from "./utils.ts";
 // Tags must start with a letter or underscore (not a digit) and must not be
 // preceded by a word character or "/" (prevents matching URL fragments,
 // hex colour codes, and markdown heading anchors).
-const TAG_PATTERN = /(?<![/\w])#([a-zA-Z_][a-zA-Z0-9_-]*)/g;
+// Supports nested tags (#parent/child) and common Unicode letters (Latin extended, CJK).
+const TAG_PATTERN =
+	/(?<![/\w])#([a-zA-Z_\u00C0-\u024F\u4E00-\u9FFF][a-zA-Z0-9_\u00C0-\u024F\u4E00-\u9FFF/-]*)/g;
 // Capture optional fold operator: '+' = expanded, '-' = collapsed, absent = static
 const CALLOUT_HEADER_PATTERN = /^\[!(\w+)\]([-+])?\s*(.*)$/;
 // Obsidian inline and block comments: %% ... %%
 const COMMENT_PATTERN = /%%[\s\S]*?%%/g;
+// Obsidian text highlighting: ==text==
+const HIGHLIGHT_PATTERN = /==([^=]+)==/g;
+// Obsidian footnotes: [^1] reference, [^1]: definition, and ^[inline text]
+const FOOTNOTE_REF_PATTERN = /\[\^([^\]]+)\](?!:)/g;
+const FOOTNOTE_DEF_PATTERN = /\[\^([^\]]+)\]:\s*(.*)$/gm;
+const INLINE_FOOTNOTE_PATTERN = /\^\[([^\]]+)\]/g;
 
 const WIKILINK_EMBED_PATTERN = /!\[\[([^\]]+)\]\]/g;
 
@@ -53,6 +62,7 @@ const CALLOUT_ICONS: Record<string, string> = {
 	warning: "⚠️",
 	danger: "🚨",
 	info: "ℹ️",
+	todo: "☑️",
 	success: "✅",
 	question: "❓",
 	bug: "🐛",
@@ -72,11 +82,15 @@ const CALLOUT_TYPE_ALIASES: Record<string, string> = {
 	done: "success",
 	help: "question",
 	faq: "question",
+	hint: "tip",
+	important: "tip",
 	caution: "caution",
 	attention: "caution",
 	failure: "failure",
 	fail: "failure",
 	missing: "failure",
+	error: "danger",
+	cite: "quote",
 };
 
 const SKIP_PARENT_TYPES = new Set([
@@ -135,6 +149,190 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 			node.value = stripped;
 		});
 
+		// Transform Obsidian text highlighting ==text== to <mark> tags
+		unistVisit(tree, "text", (node, position, parent) => {
+			if (!parent || typeof position !== "number") {
+				return;
+			}
+
+			if (SKIP_PARENT_TYPES.has(parent.type)) {
+				return;
+			}
+
+			const text = node.value;
+			if (!text.includes("==")) {
+				return;
+			}
+
+			const matches = [...text.matchAll(HIGHLIGHT_PATTERN)];
+			if (matches.length === 0) {
+				return;
+			}
+
+			const replacementNodes: PhrasingContent[] = [];
+			let cursor = 0;
+
+			for (const match of matches) {
+				const start = match.index ?? 0;
+				const fullMatch = match[0];
+				const inner = match[1] ?? "";
+
+				if (start > cursor) {
+					replacementNodes.push(createTextNode(text.slice(cursor, start)));
+				}
+
+				replacementNodes.push(createHighlightNode(inner));
+				cursor = start + fullMatch.length;
+			}
+
+			if (cursor < text.length) {
+				replacementNodes.push(createTextNode(text.slice(cursor)));
+			}
+
+			const parentWithChildren = parent as Parent & {
+				children: PhrasingContent[];
+			};
+			parentWithChildren.children.splice(position, 1, ...replacementNodes);
+		});
+
+		// Transform Obsidian footnotes — two-pass approach.
+		// Pass 1 (read-only): collect all label-based definitions across the whole tree
+		// so that title attributes are correct even when defs appear after their refs.
+		const footnoteDefs = new Map<string, string>();
+		unistVisit(tree, "text", (node) => {
+			if (!node.value.includes("[^")) return;
+			for (const m of node.value.matchAll(FOOTNOTE_DEF_PATTERN)) {
+				const label = m[1] ?? "";
+				const content = m[2] ?? "";
+				if (label && content) footnoteDefs.set(label, content);
+			}
+		});
+
+		// Pass 2: strip definition lines, transform label refs, transform inline fns.
+		let inlineFnCounter = 0;
+		const inlineFnDefs: Array<{ id: string; content: string }> = [];
+
+		unistVisit(tree, "text", (node, position, parent) => {
+			if (!parent || typeof position !== "number") return;
+			if (SKIP_PARENT_TYPES.has(parent.type)) return;
+
+			const text = node.value;
+			const hasLabelFn = text.includes("[^");
+			const hasInlineFn = text.includes("^[");
+			if (!hasLabelFn && !hasInlineFn) return;
+
+			interface FnMatch {
+				kind: "ref" | "def" | "inline";
+				start: number;
+				end: number;
+				label: string;
+				content: string;
+			}
+
+			const allMatches: FnMatch[] = [];
+
+			if (hasLabelFn) {
+				for (const m of text.matchAll(FOOTNOTE_DEF_PATTERN)) {
+					allMatches.push({
+						kind: "def",
+						start: m.index ?? 0,
+						end: (m.index ?? 0) + m[0].length,
+						label: m[1] ?? "",
+						content: m[2] ?? "",
+					});
+				}
+				for (const m of text.matchAll(FOOTNOTE_REF_PATTERN)) {
+					allMatches.push({
+						kind: "ref",
+						start: m.index ?? 0,
+						end: (m.index ?? 0) + m[0].length,
+						label: m[1] ?? "",
+						content: "",
+					});
+				}
+			}
+
+			if (hasInlineFn) {
+				for (const m of text.matchAll(INLINE_FOOTNOTE_PATTERN)) {
+					allMatches.push({
+						kind: "inline",
+						start: m.index ?? 0,
+						end: (m.index ?? 0) + m[0].length,
+						label: "",
+						content: m[1] ?? "",
+					});
+				}
+			}
+
+			if (allMatches.length === 0) return;
+
+			allMatches.sort((a, b) => a.start - b.start);
+
+			const replacementNodes: PhrasingContent[] = [];
+			let cursor = 0;
+
+			for (const match of allMatches) {
+				if (match.start > cursor) {
+					replacementNodes.push(
+						createTextNode(text.slice(cursor, match.start)),
+					);
+				}
+
+				if (match.kind === "def") {
+					// Definition lines are stripped — not included in output.
+				} else if (match.kind === "ref") {
+					const def = footnoteDefs.get(match.label);
+					const title = def ? ` title="${escapeHtmlAttribute(def)}"` : "";
+					replacementNodes.push({
+						type: "html",
+						value: `<sup class="footnote-ref" id="fnref-${escapeHtmlAttribute(match.label)}"><a href="#fn-${escapeHtmlAttribute(match.label)}"${title}>${escapeHtmlText(match.label)}</a></sup>`,
+					});
+				} else {
+					// inline footnote: ^[text]
+					inlineFnCounter++;
+					const id = `inline-${inlineFnCounter}`;
+					inlineFnDefs.push({ id, content: match.content });
+					replacementNodes.push({
+						type: "html",
+						value: `<sup class="footnote-ref" id="fnref-${id}"><a href="#fn-${id}" title="${escapeHtmlAttribute(match.content)}">${inlineFnCounter}</a></sup>`,
+					});
+				}
+
+				cursor = match.end;
+			}
+
+			if (cursor < text.length) {
+				replacementNodes.push(createTextNode(text.slice(cursor)));
+			}
+
+			const parentWithChildren = parent as Parent & {
+				children: PhrasingContent[];
+			};
+
+			// If the node was only definition text it's now empty — remove it.
+			const nonEmpty = replacementNodes.filter(
+				(n): n is PhrasingContent =>
+					n.type !== "text" || (n as Text).value.trim().length > 0,
+			);
+			if (nonEmpty.length === 0) {
+				(parent as Parent & { children: unknown[] }).children.splice(
+					position,
+					1,
+				);
+				return;
+			}
+
+			parentWithChildren.children.splice(position, 1, ...replacementNodes);
+		});
+
+		// Render all footnotes (label-based + inline) at the end of the document.
+		if (footnoteDefs.size > 0 || inlineFnDefs.length > 0) {
+			const footnotesHtml = renderAllFootnotesHtml(footnoteDefs, inlineFnDefs);
+			if (footnotesHtml) {
+				tree.children.push({ type: "html", value: footnotesHtml });
+			}
+		}
+
 		if (options.enableTagLinking) {
 			unistVisit(tree, "text", (node, position, parent) => {
 				if (!parent || typeof position !== "number") {
@@ -161,13 +359,23 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 				for (const tag of tags) {
 					const start = tag.index ?? 0;
 					const fullMatch = tag[0] ?? "";
-					const tagName = tag[1] ?? "";
+					// Trim any trailing slashes that may appear on malformed nested tags.
+					const tagName = (tag[1] ?? "").replace(/\/+$/, "");
 
 					if (start > cursor) {
 						replacementNodes.push(createTextNode(text.slice(cursor, start)));
 					}
 
-					replacementNodes.push(createLinkNode(`/tags/${tagName}`, fullMatch));
+					if (tagName) {
+						replacementNodes.push(
+							createLinkNode(
+								`/tags/${encodeTagPathSegment(tagName)}`,
+								fullMatch,
+							),
+						);
+					} else {
+						replacementNodes.push(createTextNode(fullMatch));
+					}
 					cursor = start + fullMatch.length;
 				}
 
@@ -330,7 +538,6 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 									transcludedContent = stripFrontmatter(content);
 								}
 
-								// Resolve any wikilinks inside the transcluded markdown
 								transcludedContent = resolveWikilinksInText(
 									transcludedContent,
 									currentPage,
@@ -339,7 +546,10 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 								);
 
 								result += `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedContent}\n</div>`;
-							} catch {
+							} catch (error) {
+								file.message(
+									`[rspress-plugin-obsidian-wikilink:transclusion] Failed to read "${resolved.targetPage.relativePath}" for ${fullMatch}: ${error instanceof Error ? error.message : String(error)}`,
+								);
 								result += fullMatch;
 							}
 						} else {
@@ -436,6 +646,17 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 				tree.children.push({ type: "html", value: html });
 			}
 		}
+
+		// Wrap the entire page content in a classed div when cssclasses are set.
+		// This mirrors Obsidian's behaviour where cssclasses appear on the note container.
+		if (currentPage.cssclasses.length > 0) {
+			const classes = currentPage.cssclasses.map(escapeHtmlAttribute).join(" ");
+			tree.children.unshift({
+				type: "html",
+				value: `<div class="${classes}">`,
+			});
+			tree.children.push({ type: "html", value: "</div>" });
+		}
 	};
 
 function getCurrentFilePath(file: VFile): string | undefined {
@@ -468,6 +689,13 @@ function createEmbedNode(url: string, label: string): HTML {
 	return {
 		type: "html",
 		value: `<a class="obsidian-embed" data-obsidian-embed="true" href="${escapeHtmlAttribute(url)}">${escapeHtmlText(label)}</a>`,
+	};
+}
+
+function createHighlightNode(text: string): HTML {
+	return {
+		type: "html",
+		value: `<mark>${escapeHtmlText(text)}</mark>`,
 	};
 }
 
@@ -745,4 +973,30 @@ function extractBlockSection(
 	}
 
 	return undefined;
+}
+
+function renderAllFootnotesHtml(
+	defs: Map<string, string>,
+	inlineDefs: Array<{ id: string; content: string }>,
+): string {
+	const items: string[] = [];
+
+	defs.forEach((content, label) => {
+		items.push(
+			`<li id="fn-${escapeHtmlAttribute(label)}">${escapeHtmlText(content)} <a href="#fnref-${escapeHtmlAttribute(label)}">↩</a></li>`,
+		);
+	});
+
+	for (const { id, content } of inlineDefs) {
+		items.push(
+			`<li id="fn-${escapeHtmlAttribute(id)}">${escapeHtmlText(content)} <a href="#fnref-${escapeHtmlAttribute(id)}">↩</a></li>`,
+		);
+	}
+
+	if (items.length === 0) return "";
+
+	return `<hr />
+<ol class="footnotes">
+${items.join("\n")}
+</ol>`;
 }

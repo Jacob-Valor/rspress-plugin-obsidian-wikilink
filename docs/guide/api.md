@@ -1,5 +1,5 @@
 ---
-description: Complete API reference for rspress-plugin-obsidian-wikilink. Covers pluginObsidianWikiLink, buildContentIndex, parseWikiLink, resolveWikiLink, generateTagPages, backlinks, and all TypeScript types.
+description: Complete API reference for rspress-plugin-obsidian-wikilink. Covers pluginObsidianWikiLink, buildContentIndex, parseWikiLink, resolveWikiLink, encodeTagPathSegment, generateTagPages, backlinks, and all TypeScript types.
 ---
 
 # API Reference
@@ -171,6 +171,18 @@ const pages = generateTagPages(index);
 // ]
 ```
 
+### `encodeTagPathSegment(tag: string): string`
+
+Encodes a tag name for safe use in URL path segments. Preserves Unicode letters, hyphens, underscores, and nested-tag separators (`/`). Encodes whitespace, HTML-reserved, and URL-reserved characters.
+
+```ts
+import { encodeTagPathSegment } from "rspress-plugin-obsidian-wikilink";
+
+encodeTagPathSegment("hello world");  // "hello%20world"
+encodeTagPathSegment("parent/child"); // "parent/child"
+encodeTagPathSegment("中文");          // "中文"
+```
+
 ## Types
 
 ### `RspressPluginObsidianWikiLinkOptions`
@@ -230,6 +242,8 @@ interface ContentPage {
   title?: string;          // Frontmatter title
   aliases: string[];       // Frontmatter aliases
   tags: string[];          // Frontmatter tags
+  cssclasses: string[];    // Frontmatter cssclasses
+  excerpt?: string;        // Frontmatter excerpt
   headings: HeadingEntry[];
   blocks: BlockEntry[];
 }
@@ -299,5 +313,38 @@ interface ResolveContext {
 interface BacklinkRef {
   routePath: string; // Route of the linking page
   title: string;     // Title or basename of the linking page
+}
+```
+
+### `DiagnosticMode`
+
+```ts
+type DiagnosticMode = "error" | "warn";
+```
+
+### `WikiSubpath`
+
+```ts
+interface WikiSubpath {
+  kind: "heading" | "block";
+  value: string; // Heading text or block ID (without ^)
+}
+```
+
+### `AdditionalPage`
+
+```ts
+interface AdditionalPage {
+  routePath: string; // e.g. "/tags/tutorial"
+  content: string;   // Raw markdown content for the generated page
+}
+```
+
+### `RemarkWikiLinkPluginOptions`
+
+```ts
+interface RemarkWikiLinkPluginOptions {
+  getDocsRoot: () => string;
+  options: NormalizedPluginOptions;
 }
 ```

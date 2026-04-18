@@ -1,5 +1,5 @@
 ---
-description: Complete configuration reference for rspress-plugin-obsidian-wikilink. Covers all options including transclusion, media embeds, callouts, backlinks, tag linking, tag pages, default styles, and link resolution rules.
+description: Complete configuration reference for rspress-plugin-obsidian-wikilink. Covers all options, callout types and aliases, transclusion, media embeds, highlights, footnotes, comments, link resolution rules, and frontmatter fields.
 ---
 
 # Advanced
@@ -58,7 +58,7 @@ Controls how the plugin handles ambiguous links (multiple pages share the same b
 - `false` (default) — tags are left as-is in the output
 - `true` — converts `#tag` to `[#tag](/tags/tag)`; skips code blocks and URL fragments
 
-Tag names must start with a letter or underscore (pure-numeric strings like `#123` are never matched).
+Tag names must start with a letter or underscore (pure-numeric strings like `#123` are never matched). Nested tags (`#parent/child`) and Unicode letters (Latin extended, CJK) are supported.
 
 ### `enableTagPages`
 
@@ -91,6 +91,7 @@ Produces `/tags/tutorial` and `/tags/obsidian`, each listing all pages tagged wi
 | `note` | 📝 |
 | `tip` | 💡 |
 | `info` | ℹ️ |
+| `todo` | ☑️ |
 | `success` | ✅ |
 | `question` | ❓ |
 | `warning` | ⚠️ |
@@ -109,8 +110,11 @@ Produces `/tags/tutorial` and `/tags/obsidian`, each listing all pages tagged wi
 | `summary`, `tldr` | `abstract` |
 | `check`, `done` | `success` |
 | `help`, `faq` | `question` |
+| `hint`, `important` | `tip` |
 | `attention` | `caution` |
-| `fail`, `missing` | `failure` |
+| `failure`, `fail`, `missing` | `failure` |
+| `error` | `danger` |
+| `cite` | `quote` |
 
 **Static callout:**
 ```markdown
@@ -191,6 +195,19 @@ Covers all CSS classes emitted by this plugin: `.callout-*`, `.obsidian-backlink
 
 You can also import the stylesheet manually instead:
 
+```ts
+// rspress.config.ts
+import { pluginObsidianWikiLink } from "rspress-plugin-obsidian-wikilink";
+import stylesPath from "rspress-plugin-obsidian-wikilink/styles.css?url";
+
+export default defineConfig({
+  globalStyles: stylesPath,
+  plugins: [pluginObsidianWikiLink()],
+});
+```
+
+Or in a CSS file:
+
 ```css
 @import "rspress-plugin-obsidian-wikilink/styles.css";
 ```
@@ -212,6 +229,44 @@ This entire paragraph is a private draft.
 ```
 
 > **Limitation**: comments that span multiple paragraphs (opening `%%` in one paragraph, closing `%%` in another) are not stripped.
+
+## Text Highlighting
+
+`==text==` is transformed to `<mark>` tags — no option required:
+
+```markdown
+This is ==highlighted text== in a sentence.
+```
+
+Output:
+```html
+This is <mark>highlighted text</mark> in a sentence.
+```
+
+## Footnotes
+
+Footnote references `[^1]` are converted to superscript links, with definitions rendered at the end of the page — no option required:
+
+```markdown
+This is a statement[^1] with a footnote.
+
+[^1]: This is the footnote definition.
+```
+
+Output:
+```html
+This is a statement<sup class="footnote-ref" id="fnref-1"><a href="#fn-1" title="This is the footnote definition.">1</a></sup> with a footnote.
+
+<hr />
+<ol class="footnotes">
+<li id="fn-1">This is the footnote definition. <a href="#fnref-1">↩</a></li>
+</ol>
+```
+
+Inline footnotes are also supported:
+```markdown
+Inline footnote^[This is inline] works differently.
+```
 
 ## Link Resolution
 
@@ -257,8 +312,10 @@ The plugin reads these frontmatter fields from each page:
 | Field | Purpose |
 |-------|---------|
 | `title` | Used as a lookup key (`[[My Title]]`) and as the default label |
-| `aliases` | Additional lookup keys (`[[Alias Name]]`) |
-| `tags` | Indexed in `byTag`; used to generate tag pages when `enableTagPages` is on |
+| `aliases` | Additional lookup keys (`[[Alias Name]]`). Also accepts singular `alias` |
+| `tags` | Indexed in `byTag`; used to generate tag pages when `enableTagPages` is on. Also accepts singular `tag` |
+| `cssclasses` | Custom CSS classes applied to the page container. Also accepts singular `cssclass` |
+| `excerpt` | Page excerpt/description for SEO |
 
 ## Debugging
 

@@ -1,20 +1,36 @@
 {
 	"name": "rspress-plugin-obsidian-wikilink",
 	"version": "0.1.1",
-	"description": "Obsidian-style wikilinks for Rspress.",
+	"description": "Obsidian-style wikilinks, callouts, backlinks, transclusion, tags, and footnotes for Rspress. Write your docs in Obsidian, publish with Rspress.",
 	"keywords": [
 		"rspress",
+		"rspress-plugin",
 		"obsidian",
 		"wikilink",
 		"wiki-links",
 		"remark",
-		"markdown"
+		"remark-plugin",
+		"markdown",
+		"mdast",
+		"backlinks",
+		"callouts",
+		"transclusion",
+		"docs",
+		"static-site",
+		"rsbuild"
 	],
 	"license": "MIT",
+	"author": "Jacob Valor",
 	"type": "module",
+	"sideEffects": [
+		"*.css",
+		"./dist/styles.css"
+	],
 	"files": [
 		"dist",
-		"LICENSE"
+		"LICENSE",
+		"README.md",
+		"CHANGELOG.md"
 	],
 	"repository": {
 		"type": "git",
@@ -24,25 +40,32 @@
 		"url": "https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/issues"
 	},
 	"homepage": "https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink#readme",
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/",
+		"provenance": true
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
-		"./styles.css": "./dist/styles.css"
+		"./styles.css": "./dist/styles.css",
+		"./package.json": "./package.json"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json && cp src/styles.css dist/styles.css",
-		"build:clean": "rm -rf dist && tsc -p tsconfig.build.json && cp src/styles.css dist/styles.css",
+		"build": "bun run scripts/build.ts",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check src/ tests/",
 		"lint:fix": "biome check --write src/ tests/",
 		"format": "biome format --write src/ tests/",
+		"format:check": "biome format src/ tests/",
 		"test": "bun test",
+		"test:coverage": "bun test --coverage",
 		"pretest": "bun run build",
-		"prepublishOnly": "bun run build:clean && bun run typecheck && bun test",
+		"prepublishOnly": "bun run build && bun run typecheck && bun test",
 		"docs:dev": "bunx rspress dev",
 		"docs:build": "bunx rspress build",
 		"release": "semantic-release --no-ci",
@@ -71,7 +94,7 @@
 	},
 	"peerDependencies": {
 		"@rspress/core": "^2.0.8",
-		"typescript": "^6.0.2"
+		"typescript": "^5.0.0 || ^6.0.0"
 	},
 	"engines": {
 		"node": ">=22.14.0"

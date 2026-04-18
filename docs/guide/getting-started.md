@@ -1,5 +1,5 @@
 ---
-description: Install and configure rspress-plugin-obsidian-wikilink in your Rspress project. Learn wikilink syntax, transclusion, media embeds, callouts, tag linking, and comment stripping.
+description: Install and configure rspress-plugin-obsidian-wikilink. Covers wikilink syntax, transclusion, media embeds, callouts, tags, comments, highlights, footnotes, and frontmatter support.
 ---
 
 # Getting Started
@@ -14,10 +14,23 @@ Welcome to **rspress-plugin-obsidian-wikilink** — a Rspress plugin that brings
 ## Install
 
 ```bash
+# Bun (recommended)
 bun add rspress-plugin-obsidian-wikilink
-# or
+
+# npm
 npm install rspress-plugin-obsidian-wikilink
+
+# pnpm
+pnpm add rspress-plugin-obsidian-wikilink
+
+# yarn
+yarn add rspress-plugin-obsidian-wikilink
 ```
+
+Peer requirements:
+
+- `@rspress/core`
+- `typescript`
 
 ## Quick Setup
 
@@ -43,7 +56,7 @@ export default defineConfig({
 | `[[Page#Heading]]` | Link to a specific heading |
 | `[[Page#Heading\|Alias]]` | Link to heading with alias |
 | `[[#Heading]]` | Link to heading in current page |
-| `[[Page#^block]]` | Block reference |
+| `[[Page#^block]]` | Block reference (standalone or inline) |
 
 ## Embed & Transclusion Syntax
 
@@ -76,11 +89,63 @@ Draft content — not published.
 %%
 ```
 
+## Text Highlighting
+
+`==text==` is transformed to `<mark>` tags — no option needed:
+
+```markdown
+This is ==highlighted text== in a sentence.
+```
+
+## Footnotes
+
+Footnote references `[^1]` are converted to superscript links, with definitions rendered at the end of the page — no option needed:
+
+```markdown
+This is a statement[^1] with a footnote.
+
+[^1]: This is the footnote definition.
+```
+
+Inline footnotes are also supported:
+
+```markdown
+Inline footnote^[This is inline] works differently.
+```
+
+## Frontmatter
+
+The plugin reads these frontmatter fields from each page:
+
+| Field | Purpose |
+|-------|---------|
+| `title` | Used as a lookup key (`[[My Title]]`) and as the default label |
+| `aliases` | Additional lookup keys (`[[Alias Name]]`). Also accepts singular `alias` |
+| `tags` | Tag page generation and categorization. Also accepts singular `tag` |
+| `cssclasses` | Custom CSS classes applied to the page container |
+| `excerpt` | Page excerpt/description for SEO |
+
+```yaml
+---
+title: My Custom Title
+aliases:
+  - First Alias
+  - Second Alias
+tags:
+  - tutorial
+  - obsidian
+cssclasses:
+  - custom-layout
+  - dark-theme
+excerpt: A brief description of this page
+---
+```
+
 ## Optional Features
 
 | Option | What it enables |
 |--------|----------------|
-| `enableTagLinking` | `#tag` → `[#tag](/tags/tag)` |
+| `enableTagLinking` | `#tag` → `[#tag](/tags/tag)` (includes nested and Unicode tags) |
 | `enableTagPages` | Auto-generate `/tags/{name}` index pages |
 | `enableCallouts` | `> [!note]` → styled HTML (+ foldable with `+`/`-`) |
 | `enableBacklinks` | Appends backlinks panel to each page |

@@ -13,6 +13,20 @@ import type {
 } from "./types.ts";
 import { normalizePathKey } from "./utils.ts";
 
+/**
+ * Resolve a parsed wikilink against the content index, returning a
+ * {@link ResolvedWikiLink} with either an `href` + `label` on success or
+ * a diagnostic status + `message` on failure.
+ *
+ * Resolution order for non-current-page links:
+ * 1. Exact path match
+ * 2. Unique basename match
+ * 3. Unique frontmatter title or alias match
+ * 4. Case-insensitive path fallback (opt-in via
+ *    {@link NormalizedPluginOptions.enableCaseInsensitiveLookup})
+ * 5. Shortest-suffix fuzzy match (opt-in via
+ *    {@link NormalizedPluginOptions.enableFuzzyMatching})
+ */
 export function resolveWikiLink(
 	parsed: ParsedWikiLink,
 	context: ResolveContext,
@@ -182,6 +196,25 @@ function resolveHeadingSlug(
 
 	for (const heading of page.headings) {
 		if (normalizeLookupValue(heading.rawText) === normalizedAnchor) {
+			return heading.explicitId ?? heading.slug;
+		}
+	}
+
+	// Fallback: try matching raw anchor text (with emoji) against heading slugs
+	// Obsidian may preserve emoji in IDs, but github-slugger strips them
+	const slugifiedRaw = slugifyHeading(anchor);
+	for (const heading of page.headings) {
+		if (
+			heading.slug === slugifiedRaw ||
+			heading.slug.startsWith(`${slugifiedRaw}-`)
+		) {
+			return heading.explicitId ?? heading.slug;
+		}
+	}
+
+	// Fallback: try case-insensitive match on raw text (for Unicode headings)
+	for (const heading of page.headings) {
+		if (heading.rawText.toLowerCase().includes(anchor.toLowerCase())) {
 			return heading.explicitId ?? heading.slug;
 		}
 	}

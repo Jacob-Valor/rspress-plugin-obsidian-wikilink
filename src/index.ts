@@ -17,10 +17,17 @@ export {
 	getCachedBacklinksIndex,
 	renderBacklinksHtml,
 } from "./backlinks.ts";
-export { buildContentIndex, getCachedContentIndex } from "./content-index.ts";
+export {
+	buildContentIndex,
+	getCachedContentIndex,
+} from "./content-index.ts";
 export { findWikilinkMatches, parseWikiLink } from "./parse-wikilink.ts";
 export { resolveWikiLink } from "./resolve-wikilink.ts";
-export { generateTagPages } from "./tag-pages.ts";
+export {
+	type AdditionalPage,
+	encodeTagPathSegment,
+	generateTagPages,
+} from "./tag-pages.ts";
 export type {
 	BlockEntry,
 	ContentIndex,
@@ -58,6 +65,32 @@ function normalizePluginOptions(
 // Resolved at module load time — works from both src/ (dev) and dist/ (published).
 const STYLES_PATH = fileURLToPath(new URL("./styles.css", import.meta.url));
 
+/**
+ * Rspress plugin that rewrites Obsidian-style wikilinks and supporting syntax
+ * (callouts, tags, backlinks, transclusion, media embeds, footnotes, highlights,
+ * and Obsidian comments) during the remark pipeline.
+ *
+ * @example
+ * ```ts
+ * // rspress.config.ts
+ * import { defineConfig } from "@rspress/core";
+ * import { pluginObsidianWikiLink } from "rspress-plugin-obsidian-wikilink";
+ *
+ * export default defineConfig({
+ *   plugins: [
+ *     pluginObsidianWikiLink({
+ *       enableCallouts: true,
+ *       enableBacklinks: true,
+ *       enableDefaultStyles: true,
+ *     }),
+ *   ],
+ * });
+ * ```
+ *
+ * @param options - Feature toggles and diagnostic behaviour. All fields are
+ *   optional; see {@link RspressPluginObsidianWikiLinkOptions} for details.
+ * @returns An {@link RspressPlugin} ready to append to `plugins:`.
+ */
 export function pluginObsidianWikiLink(
 	options: RspressPluginObsidianWikiLinkOptions = {},
 ): RspressPlugin {
