@@ -395,7 +395,7 @@ bun run build
 bun run docs:build
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, commit conventions, and feature guidelines.
+See [CONTRIBUTING.md](./.github/CONTRIBUTING.md) for the full workflow, commit conventions, and feature guidelines.
 
 ## Package exports
 

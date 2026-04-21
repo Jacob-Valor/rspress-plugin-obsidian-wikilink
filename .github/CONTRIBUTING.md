@@ -23,7 +23,7 @@ bun run typecheck     # TypeScript strict mode
 bun run lint          # Biome lint (source + tests)
 bun run format:check  # Formatting check (no writes)
 bun run lint:fix      # Auto-fix lint + formatting
-bun test              # 88+ tests across parser, resolver, pipeline
+bun test              # 118+ tests across parser, resolver, pipeline
 bun run test:coverage # Coverage report
 bun run build         # Produces dist/ (cross-platform)
 bun run docs:dev      # Local docs site for visual verification
