@@ -8,7 +8,13 @@ interface TagEntry {
 const TAG_UNSAFE_CHARS = /[\s"<>#?%&]/g;
 
 export function encodeTagPathSegment(tag: string): string {
-	return tag.replace(TAG_UNSAFE_CHARS, (c) => encodeURIComponent(c));
+	const encoded = tag.replace(TAG_UNSAFE_CHARS, (c) => encodeURIComponent(c));
+	if (!encoded) {
+		console.warn(
+			`[rspress-plugin-obsidian-wikilink] Tag "${tag}" encoded to an empty path segment — skipping.`,
+		);
+	}
+	return encoded;
 }
 
 /**
@@ -86,8 +92,12 @@ export interface AdditionalPage {
 export function generateTagPages(index: ContentIndex): AdditionalPage[] {
 	const tagMap = collectTags(index);
 
-	return [...tagMap.entries()].map(([, { displayName, pages }]) => ({
-		routePath: `/tags/${encodeTagPathSegment(displayName)}`,
-		content: generateTagPageContent(displayName, pages),
-	}));
+	return [...tagMap.entries()]
+		.filter(
+			([, { displayName }]) => encodeTagPathSegment(displayName).length > 0,
+		)
+		.map(([, { displayName, pages }]) => ({
+			routePath: `/tags/${encodeTagPathSegment(displayName)}`,
+			content: generateTagPageContent(displayName, pages),
+		}));
 }
