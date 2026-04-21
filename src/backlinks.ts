@@ -45,11 +45,9 @@ export async function buildBacklinksIndex(
 		try {
 			content = await fs.promises.readFile(page.absolutePath, "utf-8");
 		} catch (error) {
-			if (process.env.NODE_ENV !== "production") {
-				console.warn(
-					`[rspress-plugin-obsidian-wikilink:backlinks] Skipped ${page.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
-				);
-			}
+			console.warn(
+				`[rspress-plugin-obsidian-wikilink:backlinks] Skipped ${page.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
+			);
 			continue;
 		}
 
