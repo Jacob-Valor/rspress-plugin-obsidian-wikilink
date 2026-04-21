@@ -65,7 +65,19 @@ async function buildContentIndexFromFiles(
 	rootDir: string,
 	files: MarkdownFileEntry[],
 ): Promise<ContentIndex> {
-	const pages = await Promise.all(files.map((file) => buildContentPage(file)));
+	const settled = await Promise.allSettled(
+		files.map((file) => buildContentPage(file)),
+	);
+	const pages: ContentPage[] = [];
+	for (const result of settled) {
+		if (result.status === "fulfilled") {
+			pages.push(result.value);
+		} else {
+			console.warn(
+				`[rspress-plugin-obsidian-wikilink] Failed to index file: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+			);
+		}
+	}
 	const byAbsolutePath = new Map<string, ContentPage>();
 	const byPathKey = new Map<string, ContentPage>();
 	const byBaseName = new Map<string, ContentPage[]>();
@@ -366,6 +378,9 @@ function extractFrontmatterMetadata(markdown: string): {
 		(line, index) => index > 0 && line.trim() === "---",
 	);
 	if (closingIndex < 0) {
+		console.warn(
+			`[rspress-plugin-obsidian-wikilink] Malformed frontmatter in file: opening "---" found but no closing "---". Frontmatter metadata will be ignored.`,
+		);
 		return { aliases: [], tags: [], cssclasses: [] };
 	}
 
