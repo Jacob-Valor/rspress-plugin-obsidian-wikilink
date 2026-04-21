@@ -1079,3 +1079,359 @@ describe("tag path URL encoding", () => {
 		expect(encodeTagPathSegment("my-tag_v2")).toBe("my-tag_v2");
 	});
 });
+
+describe("highlight syntax", () => {
+	test("converts highlighted text to mark tags", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "This is ==highlighted text==.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain("<mark>highlighted text</mark>");
+	});
+
+	test("converts multiple highlights in one line", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "==one== and ==two==",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain("<mark>one</mark>");
+		expect(String(file)).toContain("<mark>two</mark>");
+	});
+
+	test("does not convert highlights inside inline code", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "`==not highlighted==`",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).not.toContain("<mark>not highlighted</mark>");
+		expect(String(file)).toContain("`==not highlighted==`");
+	});
+});
+
+describe("media embeds", () => {
+	test("renders image embeds as lazy-loaded img tags", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[image.png]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		const output = String(file);
+		expect(output).toContain('<img src="/image.png" alt="image.png"');
+		expect(output).toContain('loading="lazy"');
+	});
+
+	test("renders audio embeds as audio tags", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[audio.mp3]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		const output = String(file);
+		expect(output).toContain('audio controls src="/audio.mp3"');
+		expect(output).toContain("</audio>");
+	});
+
+	test("renders video embeds as video tags", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[video.mp4]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		const output = String(file);
+		expect(output).toContain('video controls src="/video.mp4"');
+		expect(output).toContain("</video>");
+	});
+
+	test("renders pdf embeds as iframes", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[doc.pdf]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		const output = String(file);
+		expect(output).toContain('iframe src="/doc.pdf"');
+		expect(output).toContain('width="100%" height="600px" frameborder="0"');
+		expect(output).toContain("</iframe>");
+	});
+
+	test("passes width and height attributes for sized image embeds", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[image.png|300x200]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain(
+			'<img src="/image.png" alt="image.png" width="300" height="200" loading="lazy" />',
+		);
+	});
+
+	test("passes only width attribute when only width is provided", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[image.png|300]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain(
+			'<img src="/image.png" alt="image.png" width="300" loading="lazy" />',
+		);
+	});
+
+	test("emits a warning for missing media files while still rendering HTML", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableMediaEmbeds: true });
+		const file = await processor.process({
+			value: "![[image.png]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain('<img src="/image.png" alt="image.png"');
+		expect(file.messages).toHaveLength(1);
+		expect(String(file.messages[0])).toContain('Image "image.png" not found');
+	});
+});
+
+describe("backlinks HTML", () => {
+	test("returns empty string when there are no backlinks", async () => {
+		const { renderBacklinksHtml } = await import("../src/backlinks");
+
+		expect(renderBacklinksHtml([])).toBe("");
+	});
+
+	test("renders backlinks panel HTML for backlink refs", async () => {
+		const { renderBacklinksHtml } = await import("../src/backlinks");
+
+		const html = renderBacklinksHtml([
+			{ routePath: "/", title: "Home" },
+			{ routePath: "/guide/advanced", title: "Advanced" },
+		]);
+
+		expect(html).toContain('<div class="obsidian-backlinks">');
+		expect(html).toContain("<h2>Backlinks</h2>");
+		expect(html).toContain('<li><a href="/">Home</a></li>');
+		expect(html).toContain('<li><a href="/guide/advanced">Advanced</a></li>');
+	});
+
+	test("builds backlinks for linked pages", async () => {
+		const { buildBacklinksIndex } = await import("../src/backlinks");
+		const index = await buildContentIndex(fixtureRoot);
+		const backlinks = await buildBacklinksIndex(index);
+
+		expect(backlinks.get("/guide/getting-started")).toEqual([
+			{ routePath: "/", title: "" },
+		]);
+	});
+});
+
+describe("error boundary", () => {
+	test("does not crash when processing a file outside the content index", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "[[guide/getting-started]]",
+			path: path.resolve(fixtureRoot, "missing.md"),
+		});
+
+		expect(String(file)).toContain("guide/getting-started");
+		expect(file.messages).toHaveLength(1);
+		expect(String(file.messages[0])).toContain("not found in content index");
+	});
+
+	test("emits a warning for self-transclusion", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableTransclusion: true });
+		const file = await processor.process({
+			value: "![[index]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain('data-obsidian-embed="true"');
+		expect(file.messages).toHaveLength(1);
+		expect(String(file.messages[0])).toContain("Self-transclusion detected");
+	});
+});
+
+describe("diagnostic modes", () => {
+	test("emits a warning instead of throwing when onBrokenLink is warn", async () => {
+		const processor = makeProcessor(fixtureRoot, { onBrokenLink: "warn" });
+		const file = await processor.process({
+			value: "[[nonexistent]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain("nonexistent");
+		expect(file.messages).toHaveLength(1);
+		expect(String(file.messages[0])).toContain("[[nonexistent]]");
+	});
+
+	test("records fatal broken-link diagnostics when onBrokenLink is error", async () => {
+		const processor = makeProcessor(fixtureRoot, { onBrokenLink: "error" });
+		const file = await processor.process({
+			value: "[[nonexistent]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(file.messages).toHaveLength(2);
+		expect(String(file.messages[0])).toContain(
+			"[rspress-plugin-obsidian-wikilink:broken-page] [[nonexistent]]",
+		);
+		expect(String(file.messages[1])).toContain("Unexpected error processing");
+	});
+});
+
+describe("content index resilience", () => {
+	test("buildContentIndex skips unreadable files without crashing", async () => {
+		const index = await buildContentIndex(fixtureRoot);
+		expect(index.pages.length).toBeGreaterThan(0);
+		expect(index.byAbsolutePath.size).toBeGreaterThan(0);
+	});
+});
+
+describe("transclusion embed preservation", () => {
+	test("resolveWikilinksInText preserves embed syntax inside transcluded content", async () => {
+		const processor = makeProcessor(fixtureRoot, {
+			enableTransclusion: true,
+		});
+		const file = await processor.process({
+			value: "![[guide/getting-started]]",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="obsidian-transclusion"');
+	});
+});
+
+describe("malformed frontmatter", () => {
+	test("indexes pages with missing frontmatter closing delimiter", async () => {
+		const index = await buildContentIndex(fixtureRoot);
+		expect(index.pages.length).toBeGreaterThan(0);
+	});
+});
+
+describe("pluginObsidianWikiLink API", () => {
+	test("returns the expected base plugin shape", async () => {
+		const { pluginObsidianWikiLink } = await import("../src/index");
+		const plugin = pluginObsidianWikiLink();
+
+		expect(plugin.name).toBe("rspress-plugin-obsidian-wikilink");
+		expect(plugin.markdown?.remarkPlugins).toBeArray();
+		expect(plugin.markdown?.remarkPlugins).toHaveLength(1);
+		expect(plugin.config).toBeFunction();
+	});
+
+	test("adds globalStyles when default styles are enabled", async () => {
+		const { pluginObsidianWikiLink } = await import("../src/index");
+		const plugin = pluginObsidianWikiLink({ enableDefaultStyles: true });
+
+		expect(plugin.name).toBe("rspress-plugin-obsidian-wikilink");
+		expect(plugin.globalStyles).toBeDefined();
+		expect(typeof plugin.globalStyles).toBe("string");
+	});
+
+	test("does not add globalStyles by default", async () => {
+		const { pluginObsidianWikiLink } = await import("../src/index");
+		const pluginDefault = pluginObsidianWikiLink();
+
+		expect("globalStyles" in pluginDefault).toBe(false);
+	});
+
+	test("adds addPages when tag pages are enabled", async () => {
+		const { pluginObsidianWikiLink } = await import("../src/index");
+		const plugin = pluginObsidianWikiLink({ enableTagPages: true });
+
+		expect(plugin.addPages).toBeDefined();
+		expect(typeof plugin.addPages).toBe("function");
+	});
+
+	test("does not add addPages by default", async () => {
+		const { pluginObsidianWikiLink } = await import("../src/index");
+		const pluginDefault = pluginObsidianWikiLink();
+
+		expect("addPages" in pluginDefault).toBe(false);
+	});
+});
+
+describe("duplicate footnote labels", () => {
+	test("records a warning when the same footnote label is defined twice", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value:
+				"Text[^1]\n\n[^1]: First definition text.\n[^1]: Second definition text.",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+
+		expect(file.messages.length).toBeGreaterThan(0);
+		expect(
+			file.messages.some((message) =>
+				String(message).includes("Duplicate footnote label"),
+			),
+		).toBe(true);
+	});
+});
+
+describe("edge cases", () => {
+	test("processes a file with only frontmatter without error", async () => {
+		const processor = makeProcessor(fixtureRoot);
+
+		await expect(
+			processor.process({
+				value: "---\ntitle: Empty\n---",
+				path: path.resolve(fixtureRoot, "index.md"),
+			}),
+		).resolves.toBeDefined();
+	});
+
+	test("converts highlights at the start and end of a line", async () => {
+		const processor = makeProcessor(fixtureRoot);
+		const file = await processor.process({
+			value: "==start== middle ==end==",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+
+		expect(output).toContain("<mark>start</mark>");
+		expect(output).toContain("<mark>end</mark>");
+		expect(output.match(/<mark>/g)?.length).toBe(2);
+	});
+
+	test("resolves uppercase basename wikilinks in strict fixtures", async () => {
+		const processor = makeProcessor(strictFixtureRoot);
+		const file = await processor.process({
+			value: "[[CaseSensitive]]",
+			path: path.resolve(strictFixtureRoot, "index.md"),
+		});
+
+		expect(String(file)).toContain("/guide/CaseSensitive");
+		expect(String(file)).toContain("[CaseSensitive]");
+	});
+});
+
+describe("bundled stylesheet", () => {
+	test("ships non-empty source and dist stylesheets with expected classes", async () => {
+		const fs = await import("node:fs/promises");
+		const sourceStyles = await fs.readFile(
+			path.resolve(process.cwd(), "src/styles.css"),
+			"utf8",
+		);
+		const distStyles = await fs.readFile(
+			path.resolve(process.cwd(), "dist/styles.css"),
+			"utf8",
+		);
+
+		expect(sourceStyles.length).toBeGreaterThan(0);
+		expect(sourceStyles).toContain(".callout");
+		expect(sourceStyles).toContain(".obsidian-backlinks");
+		expect(sourceStyles).toContain(".obsidian-transclusion");
+		expect(sourceStyles).toContain(".obsidian-embed");
+		expect(distStyles.length).toBeGreaterThan(0);
+		expect(distStyles).toContain(".callout");
+	});
+});

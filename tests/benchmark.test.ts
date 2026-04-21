@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { buildContentIndex, getCachedContentIndex } from "../src/content-index";
 import { findWikilinkMatches, parseWikiLink } from "../src/parse-wikilink";
@@ -35,6 +35,7 @@ describe("parse-wikilink benchmarks", () => {
 		console.log(
 			`  findWikilinkMatches: ${duration.toFixed(2)}ms for 1000 iterations`,
 		);
+		expect(duration).toBeLessThan(500);
 	});
 
 	test("parseWikiLink - single link", () => {
@@ -49,6 +50,7 @@ describe("parse-wikilink benchmarks", () => {
 		console.log(
 			`  parseWikiLink: ${duration.toFixed(2)}ms for 10000 iterations`,
 		);
+		expect(duration).toBeLessThan(100);
 	});
 
 	test("parseWikiLink - 100 links", () => {
@@ -63,6 +65,7 @@ describe("parse-wikilink benchmarks", () => {
 		console.log(
 			`  parseWikiLink 100 links: ${duration.toFixed(2)}ms for 1000 iterations`,
 		);
+		expect(duration).toBeLessThan(500);
 	});
 });
 
@@ -72,6 +75,7 @@ describe("content-index benchmarks", () => {
 		await buildContentIndex(fixtureRoot);
 		const duration = performance.now() - start;
 		console.log(`  buildContentIndex: ${duration.toFixed(2)}ms`);
+		expect(duration).toBeLessThan(100);
 	});
 
 	test("getCachedContentIndex - cached", async () => {
@@ -84,6 +88,7 @@ describe("content-index benchmarks", () => {
 		console.log(
 			`  getCachedContentIndex (cached): ${duration.toFixed(2)}ms for 1000 iterations`,
 		);
+		expect(duration).toBeLessThan(500);
 	});
 
 	test("resolveWikiLink - exact path", async () => {
@@ -100,6 +105,7 @@ describe("content-index benchmarks", () => {
 		console.log(
 			`  resolveWikiLink exact path: ${duration.toFixed(2)}ms for 10000 iterations`,
 		);
+		expect(duration).toBeLessThan(100);
 	});
 
 	test("resolveWikiLink - basename match", async () => {
@@ -116,6 +122,7 @@ describe("content-index benchmarks", () => {
 		console.log(
 			`  resolveWikiLink basename: ${duration.toFixed(2)}ms for 10000 iterations`,
 		);
+		expect(duration).toBeLessThan(100);
 	});
 
 	test("resolveWikiLink - with heading", async () => {
@@ -135,6 +142,7 @@ describe("content-index benchmarks", () => {
 		console.log(
 			`  resolveWikiLink with heading: ${duration.toFixed(2)}ms for 10000 iterations`,
 		);
+		expect(duration).toBeLessThan(200);
 	});
 });
 
@@ -158,5 +166,6 @@ describe("full pipeline benchmarks", () => {
 		console.log(
 			`  full pipeline 100 wikilinks: ${duration.toFixed(2)}ms for 1000 iterations`,
 		);
+		expect(duration).toBeLessThan(1000);
 	});
 });
