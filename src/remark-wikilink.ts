@@ -109,47 +109,252 @@ const SKIP_PARENT_TYPES = new Set([
 export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 	({ getDocsRoot, options }) =>
 	async (tree: Root, file: VFile): Promise<void> => {
-		const docsRoot = getDocsRoot();
-		const index = await getCachedContentIndex(docsRoot);
-		const currentFilePath = getCurrentFilePath(file);
+		try {
+			await remarkWikilinkInner(tree, file, getDocsRoot, options);
+		} catch (error) {
+			file.message(
+				`[rspress-plugin-obsidian-wikilink] Unexpected error processing ${file.path ?? "unknown file"}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	};
 
-		if (!currentFilePath) {
+async function remarkWikilinkInner(
+	tree: Root,
+	file: VFile,
+	getDocsRoot: () => string,
+	options: NormalizedPluginOptions,
+): Promise<void> {
+	const docsRoot = getDocsRoot();
+	const index = await getCachedContentIndex(docsRoot);
+	const currentFilePath = getCurrentFilePath(file);
+
+	if (!currentFilePath) {
+		return;
+	}
+
+	const currentPage = index.byAbsolutePath.get(currentFilePath);
+	if (!currentPage) {
+		file.message(
+			`[rspress-plugin-obsidian-wikilink] File "${currentFilePath}" not found in content index — wikilink processing skipped.`,
+		);
+		return;
+	}
+
+	const resolveOptions = {
+		enableFuzzyMatching: options.enableFuzzyMatching,
+		enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
+	};
+
+	// Strip Obsidian comments (%% ... %%) before all other transforms.
+	unistVisit(tree, "text", (node, position, parent) => {
+		if (!node.value.includes("%%")) return;
+		const stripped = node.value.replace(COMMENT_PATTERN, "");
+		if (stripped === node.value) return;
+
+		if (
+			stripped.trim().length === 0 &&
+			parent &&
+			typeof position === "number"
+		) {
+			// Remove the now-empty text node from its parent
+			(parent as Parent & { children: unknown[] }).children.splice(position, 1);
 			return;
 		}
 
-		const currentPage = index.byAbsolutePath.get(currentFilePath);
-		if (!currentPage) {
+		node.value = stripped;
+	});
+
+	// Transform Obsidian text highlighting ==text== to <mark> tags
+	unistVisit(tree, "text", (node, position, parent) => {
+		if (!parent || typeof position !== "number") {
 			return;
 		}
 
-		const resolveOptions = {
-			enableFuzzyMatching: options.enableFuzzyMatching,
-			enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
-		};
+		if (SKIP_PARENT_TYPES.has(parent.type)) {
+			return;
+		}
 
-		// Strip Obsidian comments (%% ... %%) before all other transforms.
-		unistVisit(tree, "text", (node, position, parent) => {
-			if (!node.value.includes("%%")) return;
-			const stripped = node.value.replace(COMMENT_PATTERN, "");
-			if (stripped === node.value) return;
+		const text = node.value;
+		if (!text.includes("==")) {
+			return;
+		}
 
-			if (
-				stripped.trim().length === 0 &&
-				parent &&
-				typeof position === "number"
-			) {
-				// Remove the now-empty text node from its parent
-				(parent as Parent & { children: unknown[] }).children.splice(
-					position,
-					1,
-				);
-				return;
+		const matches = [...text.matchAll(HIGHLIGHT_PATTERN)];
+		if (matches.length === 0) {
+			return;
+		}
+
+		const replacementNodes: PhrasingContent[] = [];
+		let cursor = 0;
+
+		for (const match of matches) {
+			const start = match.index ?? 0;
+			const fullMatch = match[0];
+			const inner = match[1] ?? "";
+
+			if (start > cursor) {
+				replacementNodes.push(createTextNode(text.slice(cursor, start)));
 			}
 
-			node.value = stripped;
-		});
+			replacementNodes.push(createHighlightNode(inner));
+			cursor = start + fullMatch.length;
+		}
 
-		// Transform Obsidian text highlighting ==text== to <mark> tags
+		if (cursor < text.length) {
+			replacementNodes.push(createTextNode(text.slice(cursor)));
+		}
+
+		const parentWithChildren = parent as Parent & {
+			children: PhrasingContent[];
+		};
+		parentWithChildren.children.splice(position, 1, ...replacementNodes);
+	});
+
+	// Transform Obsidian footnotes — two-pass approach.
+	// Pass 1 (read-only): collect all label-based definitions across the whole tree
+	// so that title attributes are correct even when defs appear after their refs.
+	const footnoteDefs = new Map<string, string>();
+	const footnoteDupeLabels = new Set<string>();
+	unistVisit(tree, "text", (node) => {
+		if (!node.value.includes("[^")) return;
+		for (const m of node.value.matchAll(FOOTNOTE_DEF_PATTERN)) {
+			const label = m[1] ?? "";
+			const content = m[2] ?? "";
+			if (label && content) {
+				if (footnoteDefs.has(label)) {
+					footnoteDupeLabels.add(label);
+				}
+				footnoteDefs.set(label, content);
+			}
+		}
+	});
+	if (footnoteDupeLabels.size > 0) {
+		file.message(
+			`[rspress-plugin-obsidian-wikilink:footnote] Duplicate footnote label${footnoteDupeLabels.size > 1 ? "s" : ""}: ${[...footnoteDupeLabels].join(", ")}. Later definitions overwrite earlier ones.`,
+		);
+	}
+
+	// Pass 2: strip definition lines, transform label refs, transform inline fns.
+	let inlineFnCounter = 0;
+	const inlineFnDefs: Array<{ id: string; content: string }> = [];
+
+	unistVisit(tree, "text", (node, position, parent) => {
+		if (!parent || typeof position !== "number") return;
+		if (SKIP_PARENT_TYPES.has(parent.type)) return;
+
+		const text = node.value;
+		const hasLabelFn = text.includes("[^");
+		const hasInlineFn = text.includes("^[");
+		if (!hasLabelFn && !hasInlineFn) return;
+
+		interface FnMatch {
+			kind: "ref" | "def" | "inline";
+			start: number;
+			end: number;
+			label: string;
+			content: string;
+		}
+
+		const allMatches: FnMatch[] = [];
+
+		if (hasLabelFn) {
+			for (const m of text.matchAll(FOOTNOTE_DEF_PATTERN)) {
+				allMatches.push({
+					kind: "def",
+					start: m.index ?? 0,
+					end: (m.index ?? 0) + m[0].length,
+					label: m[1] ?? "",
+					content: m[2] ?? "",
+				});
+			}
+			for (const m of text.matchAll(FOOTNOTE_REF_PATTERN)) {
+				allMatches.push({
+					kind: "ref",
+					start: m.index ?? 0,
+					end: (m.index ?? 0) + m[0].length,
+					label: m[1] ?? "",
+					content: "",
+				});
+			}
+		}
+
+		if (hasInlineFn) {
+			for (const m of text.matchAll(INLINE_FOOTNOTE_PATTERN)) {
+				allMatches.push({
+					kind: "inline",
+					start: m.index ?? 0,
+					end: (m.index ?? 0) + m[0].length,
+					label: "",
+					content: m[1] ?? "",
+				});
+			}
+		}
+
+		if (allMatches.length === 0) return;
+
+		allMatches.sort((a, b) => a.start - b.start);
+
+		const replacementNodes: PhrasingContent[] = [];
+		let cursor = 0;
+
+		for (const match of allMatches) {
+			if (match.start > cursor) {
+				replacementNodes.push(createTextNode(text.slice(cursor, match.start)));
+			}
+
+			if (match.kind === "def") {
+				// Definition lines are stripped — not included in output.
+			} else if (match.kind === "ref") {
+				const def = footnoteDefs.get(match.label);
+				const title = def ? ` title="${escapeHtmlAttribute(def)}"` : "";
+				replacementNodes.push({
+					type: "html",
+					value: `<sup class="footnote-ref" id="fnref-${escapeHtmlAttribute(match.label)}"><a href="#fn-${escapeHtmlAttribute(match.label)}"${title}>${escapeHtmlText(match.label)}</a></sup>`,
+				});
+			} else {
+				// inline footnote: ^[text]
+				inlineFnCounter++;
+				const id = `inline-${inlineFnCounter}`;
+				inlineFnDefs.push({ id, content: match.content });
+				replacementNodes.push({
+					type: "html",
+					value: `<sup class="footnote-ref" id="fnref-${id}"><a href="#fn-${id}" title="${escapeHtmlAttribute(match.content)}">${inlineFnCounter}</a></sup>`,
+				});
+			}
+
+			cursor = match.end;
+		}
+
+		if (cursor < text.length) {
+			replacementNodes.push(createTextNode(text.slice(cursor)));
+		}
+
+		const parentWithChildren = parent as Parent & {
+			children: PhrasingContent[];
+		};
+
+		// If the node was only definition text it's now empty — remove it.
+		const nonEmpty = replacementNodes.filter(
+			(n): n is PhrasingContent =>
+				n.type !== "text" || (n as Text).value.trim().length > 0,
+		);
+		if (nonEmpty.length === 0) {
+			(parent as Parent & { children: unknown[] }).children.splice(position, 1);
+			return;
+		}
+
+		parentWithChildren.children.splice(position, 1, ...replacementNodes);
+	});
+
+	// Render all footnotes (label-based + inline) at the end of the document.
+	if (footnoteDefs.size > 0 || inlineFnDefs.length > 0) {
+		const footnotesHtml = renderAllFootnotesHtml(footnoteDefs, inlineFnDefs);
+		if (footnotesHtml) {
+			tree.children.push({ type: "html", value: footnotesHtml });
+		}
+	}
+
+	if (options.enableTagLinking) {
 		unistVisit(tree, "text", (node, position, parent) => {
 			if (!parent || typeof position !== "number") {
 				return;
@@ -160,28 +365,35 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 			}
 
 			const text = node.value;
-			if (!text.includes("==")) {
+			if (!text.includes("#")) {
 				return;
 			}
 
-			const matches = [...text.matchAll(HIGHLIGHT_PATTERN)];
-			if (matches.length === 0) {
+			const tags = [...text.matchAll(TAG_PATTERN)];
+			if (tags.length === 0) {
 				return;
 			}
 
 			const replacementNodes: PhrasingContent[] = [];
 			let cursor = 0;
 
-			for (const match of matches) {
-				const start = match.index ?? 0;
-				const fullMatch = match[0];
-				const inner = match[1] ?? "";
+			for (const tag of tags) {
+				const start = tag.index ?? 0;
+				const fullMatch = tag[0] ?? "";
+				// Trim any trailing slashes that may appear on malformed nested tags.
+				const tagName = (tag[1] ?? "").replace(/\/+$/, "");
 
 				if (start > cursor) {
 					replacementNodes.push(createTextNode(text.slice(cursor, start)));
 				}
 
-				replacementNodes.push(createHighlightNode(inner));
+				if (tagName) {
+					replacementNodes.push(
+						createLinkNode(`/tags/${encodeTagPathSegment(tagName)}`, fullMatch),
+					);
+				} else {
+					replacementNodes.push(createTextNode(fullMatch));
+				}
 				cursor = start + fullMatch.length;
 			}
 
@@ -194,324 +406,153 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 			};
 			parentWithChildren.children.splice(position, 1, ...replacementNodes);
 		});
+	}
 
-		// Transform Obsidian footnotes — two-pass approach.
-		// Pass 1 (read-only): collect all label-based definitions across the whole tree
-		// so that title attributes are correct even when defs appear after their refs.
-		const footnoteDefs = new Map<string, string>();
-		unistVisit(tree, "text", (node) => {
-			if (!node.value.includes("[^")) return;
-			for (const m of node.value.matchAll(FOOTNOTE_DEF_PATTERN)) {
-				const label = m[1] ?? "";
-				const content = m[2] ?? "";
-				if (label && content) footnoteDefs.set(label, content);
-			}
-		});
-
-		// Pass 2: strip definition lines, transform label refs, transform inline fns.
-		let inlineFnCounter = 0;
-		const inlineFnDefs: Array<{ id: string; content: string }> = [];
-
-		unistVisit(tree, "text", (node, position, parent) => {
-			if (!parent || typeof position !== "number") return;
-			if (SKIP_PARENT_TYPES.has(parent.type)) return;
-
-			const text = node.value;
-			const hasLabelFn = text.includes("[^");
-			const hasInlineFn = text.includes("^[");
-			if (!hasLabelFn && !hasInlineFn) return;
-
-			interface FnMatch {
-				kind: "ref" | "def" | "inline";
-				start: number;
-				end: number;
-				label: string;
-				content: string;
-			}
-
-			const allMatches: FnMatch[] = [];
-
-			if (hasLabelFn) {
-				for (const m of text.matchAll(FOOTNOTE_DEF_PATTERN)) {
-					allMatches.push({
-						kind: "def",
-						start: m.index ?? 0,
-						end: (m.index ?? 0) + m[0].length,
-						label: m[1] ?? "",
-						content: m[2] ?? "",
-					});
-				}
-				for (const m of text.matchAll(FOOTNOTE_REF_PATTERN)) {
-					allMatches.push({
-						kind: "ref",
-						start: m.index ?? 0,
-						end: (m.index ?? 0) + m[0].length,
-						label: m[1] ?? "",
-						content: "",
-					});
-				}
-			}
-
-			if (hasInlineFn) {
-				for (const m of text.matchAll(INLINE_FOOTNOTE_PATTERN)) {
-					allMatches.push({
-						kind: "inline",
-						start: m.index ?? 0,
-						end: (m.index ?? 0) + m[0].length,
-						label: "",
-						content: m[1] ?? "",
-					});
-				}
-			}
-
-			if (allMatches.length === 0) return;
-
-			allMatches.sort((a, b) => a.start - b.start);
-
-			const replacementNodes: PhrasingContent[] = [];
-			let cursor = 0;
-
-			for (const match of allMatches) {
-				if (match.start > cursor) {
-					replacementNodes.push(
-						createTextNode(text.slice(cursor, match.start)),
-					);
-				}
-
-				if (match.kind === "def") {
-					// Definition lines are stripped — not included in output.
-				} else if (match.kind === "ref") {
-					const def = footnoteDefs.get(match.label);
-					const title = def ? ` title="${escapeHtmlAttribute(def)}"` : "";
-					replacementNodes.push({
-						type: "html",
-						value: `<sup class="footnote-ref" id="fnref-${escapeHtmlAttribute(match.label)}"><a href="#fn-${escapeHtmlAttribute(match.label)}"${title}>${escapeHtmlText(match.label)}</a></sup>`,
-					});
-				} else {
-					// inline footnote: ^[text]
-					inlineFnCounter++;
-					const id = `inline-${inlineFnCounter}`;
-					inlineFnDefs.push({ id, content: match.content });
-					replacementNodes.push({
-						type: "html",
-						value: `<sup class="footnote-ref" id="fnref-${id}"><a href="#fn-${id}" title="${escapeHtmlAttribute(match.content)}">${inlineFnCounter}</a></sup>`,
-					});
-				}
-
-				cursor = match.end;
-			}
-
-			if (cursor < text.length) {
-				replacementNodes.push(createTextNode(text.slice(cursor)));
-			}
-
-			const parentWithChildren = parent as Parent & {
-				children: PhrasingContent[];
-			};
-
-			// If the node was only definition text it's now empty — remove it.
-			const nonEmpty = replacementNodes.filter(
-				(n): n is PhrasingContent =>
-					n.type !== "text" || (n as Text).value.trim().length > 0,
-			);
-			if (nonEmpty.length === 0) {
-				(parent as Parent & { children: unknown[] }).children.splice(
-					position,
-					1,
-				);
+	if (options.enableCallouts) {
+		unistVisit(tree, "blockquote", (node, position, parent) => {
+			if (!parent || typeof position !== "number") {
 				return;
 			}
 
-			parentWithChildren.children.splice(position, 1, ...replacementNodes);
+			const bq = node as Blockquote;
+			const firstPara = bq.children[0];
+			if (!firstPara || firstPara.type !== "paragraph") {
+				return;
+			}
+
+			const firstText = firstPara.children.find(
+				(c): c is Text => c.type === "text",
+			);
+			if (!firstText) {
+				return;
+			}
+
+			const lines = firstText.value.split("\n");
+			const headerLine = lines[0] ?? "";
+			const calloutMatch = CALLOUT_HEADER_PATTERN.exec(headerLine);
+			if (!calloutMatch) {
+				return;
+			}
+
+			const rawType = calloutMatch[1]?.toLowerCase() ?? "note";
+			const calloutType = CALLOUT_TYPE_ALIASES[rawType] ?? rawType;
+			const foldState = calloutMatch[2]; // '+' | '-' | undefined
+			const calloutTitle = calloutMatch[3]?.trim() || rawType;
+			const icon = CALLOUT_ICONS[calloutType] ?? "📝";
+
+			const remainingLines = lines.slice(1);
+			if (remainingLines.length === 0) {
+				bq.children.shift();
+			} else {
+				firstText.value = remainingLines.join("\n");
+			}
+
+			const replacements: Root["children"] = buildCalloutNodes(
+				calloutType,
+				calloutTitle,
+				icon,
+				foldState,
+				bq.children as Root["children"],
+			);
+
+			const parentNode = parent as Parent & { children: Root["children"] };
+			parentNode.children.splice(position, 1, ...replacements);
+		});
+	}
+
+	if (options.enableMediaEmbeds || options.enableTransclusion) {
+		// Two-pass approach: collect nodes to process, then resolve async
+		interface EmbedWork {
+			node: Text;
+		}
+		const embedNodes: EmbedWork[] = [];
+
+		unistVisit(tree, "text", (node, _position, parent) => {
+			if (!parent || SKIP_PARENT_TYPES.has(parent.type)) return;
+			if (!node.value.includes("![[")) return;
+			const embedMatches = [...node.value.matchAll(WIKILINK_EMBED_PATTERN)];
+			if (embedMatches.length > 0) {
+				embedNodes.push({ node });
+			}
 		});
 
-		// Render all footnotes (label-based + inline) at the end of the document.
-		if (footnoteDefs.size > 0 || inlineFnDefs.length > 0) {
-			const footnotesHtml = renderAllFootnotesHtml(footnoteDefs, inlineFnDefs);
-			if (footnotesHtml) {
-				tree.children.push({ type: "html", value: footnotesHtml });
-			}
-		}
+		// Process all embed nodes with proper async file reads
+		for (const { node } of embedNodes) {
+			const text = node.value;
+			const embedMatches = [...text.matchAll(WIKILINK_EMBED_PATTERN)];
+			if (embedMatches.length === 0) continue;
 
-		if (options.enableTagLinking) {
-			unistVisit(tree, "text", (node, position, parent) => {
-				if (!parent || typeof position !== "number") {
-					return;
+			let result = "";
+			let lastEnd = 0;
+
+			for (const match of embedMatches) {
+				const start = match.index ?? 0;
+				const fullMatch = match[0];
+				const inner = match[1] ?? "";
+
+				if (start > lastEnd) {
+					result += text.slice(lastEnd, start);
 				}
 
-				if (SKIP_PARENT_TYPES.has(parent.type)) {
-					return;
-				}
+				const pipeIdx = inner.indexOf("|");
+				const targetRaw = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
+				const sizeParam = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : "";
+				const target = targetRaw.trim();
+				const ext = target.split(".").pop()?.toLowerCase() ?? "";
 
-				const text = node.value;
-				if (!text.includes("#")) {
-					return;
-				}
-
-				const tags = [...text.matchAll(TAG_PATTERN)];
-				if (tags.length === 0) {
-					return;
-				}
-
-				const replacementNodes: PhrasingContent[] = [];
-				let cursor = 0;
-
-				for (const tag of tags) {
-					const start = tag.index ?? 0;
-					const fullMatch = tag[0] ?? "";
-					// Trim any trailing slashes that may appear on malformed nested tags.
-					const tagName = (tag[1] ?? "").replace(/\/+$/, "");
-
-					if (start > cursor) {
-						replacementNodes.push(createTextNode(text.slice(cursor, start)));
+				if (options.enableMediaEmbeds && IMAGE_EXTS.has(ext)) {
+					const sizeAttr = parseSizeAttr(sizeParam);
+					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+					if (!resolved.found) {
+						file.message(
+							`[rspress-plugin-obsidian-wikilink:media] Image "${target}" not found on disk for ${fullMatch}.`,
+						);
 					}
-
-					if (tagName) {
-						replacementNodes.push(
-							createLinkNode(
-								`/tags/${encodeTagPathSegment(tagName)}`,
-								fullMatch,
-							),
+					const src = escapeHtmlAttribute(resolved.url);
+					result += `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`;
+				} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
+					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+					if (!resolved.found) {
+						file.message(
+							`[rspress-plugin-obsidian-wikilink:media] Audio "${target}" not found on disk for ${fullMatch}.`,
 						);
-					} else {
-						replacementNodes.push(createTextNode(fullMatch));
 					}
-					cursor = start + fullMatch.length;
-				}
-
-				if (cursor < text.length) {
-					replacementNodes.push(createTextNode(text.slice(cursor)));
-				}
-
-				const parentWithChildren = parent as Parent & {
-					children: PhrasingContent[];
-				};
-				parentWithChildren.children.splice(position, 1, ...replacementNodes);
-			});
-		}
-
-		if (options.enableCallouts) {
-			unistVisit(tree, "blockquote", (node, position, parent) => {
-				if (!parent || typeof position !== "number") {
-					return;
-				}
-
-				const bq = node as Blockquote;
-				const firstPara = bq.children[0];
-				if (!firstPara || firstPara.type !== "paragraph") {
-					return;
-				}
-
-				const firstText = firstPara.children.find(
-					(c): c is Text => c.type === "text",
-				);
-				if (!firstText) {
-					return;
-				}
-
-				const lines = firstText.value.split("\n");
-				const headerLine = lines[0] ?? "";
-				const calloutMatch = CALLOUT_HEADER_PATTERN.exec(headerLine);
-				if (!calloutMatch) {
-					return;
-				}
-
-				const rawType = calloutMatch[1]?.toLowerCase() ?? "note";
-				const calloutType = CALLOUT_TYPE_ALIASES[rawType] ?? rawType;
-				const foldState = calloutMatch[2]; // '+' | '-' | undefined
-				const calloutTitle = calloutMatch[3]?.trim() || rawType;
-				const icon = CALLOUT_ICONS[calloutType] ?? "📝";
-
-				const remainingLines = lines.slice(1);
-				if (remainingLines.length === 0) {
-					bq.children.shift();
-				} else {
-					firstText.value = remainingLines.join("\n");
-				}
-
-				const replacements: Root["children"] = buildCalloutNodes(
-					calloutType,
-					calloutTitle,
-					icon,
-					foldState,
-					bq.children as Root["children"],
-				);
-
-				const parentNode = parent as Parent & { children: Root["children"] };
-				parentNode.children.splice(position, 1, ...replacements);
-			});
-		}
-
-		if (options.enableMediaEmbeds || options.enableTransclusion) {
-			// Two-pass approach: collect nodes to process, then resolve async
-			interface EmbedWork {
-				node: Text;
-			}
-			const embedNodes: EmbedWork[] = [];
-
-			unistVisit(tree, "text", (node, _position, parent) => {
-				if (!parent || SKIP_PARENT_TYPES.has(parent.type)) return;
-				if (!node.value.includes("![[")) return;
-				const embedMatches = [...node.value.matchAll(WIKILINK_EMBED_PATTERN)];
-				if (embedMatches.length > 0) {
-					embedNodes.push({ node });
-				}
-			});
-
-			// Process all embed nodes with proper async file reads
-			for (const { node } of embedNodes) {
-				const text = node.value;
-				const embedMatches = [...text.matchAll(WIKILINK_EMBED_PATTERN)];
-				if (embedMatches.length === 0) continue;
-
-				let result = "";
-				let lastEnd = 0;
-
-				for (const match of embedMatches) {
-					const start = match.index ?? 0;
-					const fullMatch = match[0];
-					const inner = match[1] ?? "";
-
-					if (start > lastEnd) {
-						result += text.slice(lastEnd, start);
+					const src = escapeHtmlAttribute(resolved.url);
+					result += `<audio controls src="${src}"></audio>`;
+				} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
+					const sizeAttr = parseSizeAttr(sizeParam);
+					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+					if (!resolved.found) {
+						file.message(
+							`[rspress-plugin-obsidian-wikilink:media] Video "${target}" not found on disk for ${fullMatch}.`,
+						);
 					}
+					const src = escapeHtmlAttribute(resolved.url);
+					result += `<video controls src="${src}"${sizeAttr}></video>`;
+				} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
+					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+					if (!resolved.found) {
+						file.message(
+							`[rspress-plugin-obsidian-wikilink:media] PDF "${target}" not found on disk for ${fullMatch}.`,
+						);
+					}
+					const src = escapeHtmlAttribute(resolved.url);
+					result += `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`;
+				} else if (options.enableTransclusion) {
+					const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
+						currentPage,
+						index,
+						options: resolveOptions,
+					});
 
-					const pipeIdx = inner.indexOf("|");
-					const targetRaw = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
-					const sizeParam = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : "";
-					const target = targetRaw.trim();
-					const ext = target.split(".").pop()?.toLowerCase() ?? "";
-
-					if (options.enableMediaEmbeds && IMAGE_EXTS.has(ext)) {
-						const sizeAttr = parseSizeAttr(sizeParam);
-						const src = escapeHtmlAttribute(
-							resolveMediaSrc(target, docsRoot, currentFilePath),
-						);
-						result += `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`;
-					} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
-						const src = escapeHtmlAttribute(
-							resolveMediaSrc(target, docsRoot, currentFilePath),
-						);
-						result += `<audio controls src="${src}"></audio>`;
-					} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
-						const sizeAttr = parseSizeAttr(sizeParam);
-						const src = escapeHtmlAttribute(
-							resolveMediaSrc(target, docsRoot, currentFilePath),
-						);
-						result += `<video controls src="${src}"${sizeAttr}></video>`;
-					} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
-						const src = escapeHtmlAttribute(
-							resolveMediaSrc(target, docsRoot, currentFilePath),
-						);
-						result += `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`;
-					} else if (options.enableTransclusion) {
-						const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
-							currentPage,
-							index,
-							options: resolveOptions,
-						});
-
-						if (resolved.status === "ok" && resolved.targetPage) {
+					if (resolved.status === "ok" && resolved.targetPage) {
+						// Self-transclusion guard
+						if (resolved.targetPage.absolutePath === currentPage.absolutePath) {
+							file.message(
+								`[rspress-plugin-obsidian-wikilink:transclusion] Self-transclusion detected: ${fullMatch} in "${currentPage.relativePath}".`,
+							);
+							result += fullMatch;
+						} else {
 							try {
 								const content = await fs.promises.readFile(
 									resolved.targetPage.absolutePath,
@@ -530,6 +571,12 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 										transcludedContent = extractBlockSection(
 											content,
 											parsed.subpath.value,
+										);
+									}
+
+									if (transcludedContent === undefined) {
+										file.message(
+											`[rspress-plugin-obsidian-wikilink:transclusion] ${parsed.subpath.kind === "heading" ? "Heading" : "Block"} "${parsed.subpath.value}" not found in "${resolved.targetPage.relativePath}" for ${fullMatch}; falling back to full page content.`,
 										);
 									}
 								}
@@ -552,112 +599,113 @@ export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 								);
 								result += fullMatch;
 							}
-						} else {
-							result += fullMatch;
 						}
 					} else {
 						result += fullMatch;
 					}
-
-					lastEnd = start + fullMatch.length;
+				} else {
+					result += fullMatch;
 				}
 
-				if (lastEnd < text.length) {
-					result += text.slice(lastEnd);
-				}
-
-				node.value = result;
+				lastEnd = start + fullMatch.length;
 			}
+
+			if (lastEnd < text.length) {
+				result += text.slice(lastEnd);
+			}
+
+			node.value = result;
+		}
+	}
+
+	unistVisit(tree, "text", (node, position, parent) => {
+		if (!parent || typeof position !== "number") {
+			return;
 		}
 
-		unistVisit(tree, "text", (node, position, parent) => {
-			if (!parent || typeof position !== "number") {
-				return;
+		if (SKIP_PARENT_TYPES.has(parent.type)) {
+			return;
+		}
+
+		const matches = findWikilinkMatches(node.value);
+		if (matches.length === 0) {
+			return;
+		}
+
+		const replacementNodes: PhrasingContent[] = [];
+		let cursor = 0;
+
+		for (const match of matches) {
+			if (match.start > cursor) {
+				replacementNodes.push(
+					createTextNode(node.value.slice(cursor, match.start)),
+				);
 			}
 
-			if (SKIP_PARENT_TYPES.has(parent.type)) {
-				return;
-			}
+			const parsed = parseWikiLink(match.inner, match.fullMatch);
+			const resolved = resolveWikiLink(parsed, {
+				currentPage,
+				index,
+				options: resolveOptions,
+			});
 
-			const matches = findWikilinkMatches(node.value);
-			if (matches.length === 0) {
-				return;
-			}
+			if (resolved.status === "ok") {
+				const href = resolved.href;
+				const label = resolved.label;
 
-			const replacementNodes: PhrasingContent[] = [];
-			let cursor = 0;
-
-			for (const match of matches) {
-				if (match.start > cursor) {
+				if (href && label) {
 					replacementNodes.push(
-						createTextNode(node.value.slice(cursor, match.start)),
+						parsed.isEmbed
+							? createEmbedNode(href, label)
+							: createLinkNode(href, label),
 					);
-				}
-
-				const parsed = parseWikiLink(match.inner, match.fullMatch);
-				const resolved = resolveWikiLink(parsed, {
-					currentPage,
-					index,
-					options: resolveOptions,
-				});
-
-				if (resolved.status === "ok") {
-					const href = resolved.href;
-					const label = resolved.label;
-
-					if (href && label) {
-						replacementNodes.push(
-							parsed.isEmbed
-								? createEmbedNode(href, label)
-								: createLinkNode(href, label),
-						);
-					} else {
-						replacementNodes.push(createTextNode(parsed.raw));
-					}
 				} else {
-					reportDiagnostic(
-						file,
-						parsed.raw,
-						resolved.message ?? "Unable to resolve wikilink.",
-						resolved.status,
-						options,
-					);
 					replacementNodes.push(createTextNode(parsed.raw));
 				}
-
-				cursor = match.end;
+			} else {
+				reportDiagnostic(
+					file,
+					parsed.raw,
+					resolved.message ?? "Unable to resolve wikilink.",
+					resolved.status,
+					options,
+				);
+				replacementNodes.push(createTextNode(parsed.raw));
 			}
 
-			if (cursor < node.value.length) {
-				replacementNodes.push(createTextNode(node.value.slice(cursor)));
-			}
+			cursor = match.end;
+		}
 
-			const parentWithChildren = parent as Parent & {
-				children: PhrasingContent[];
-			};
-			parentWithChildren.children.splice(position, 1, ...replacementNodes);
+		if (cursor < node.value.length) {
+			replacementNodes.push(createTextNode(node.value.slice(cursor)));
+		}
+
+		const parentWithChildren = parent as Parent & {
+			children: PhrasingContent[];
+		};
+		parentWithChildren.children.splice(position, 1, ...replacementNodes);
+	});
+
+	if (options.enableBacklinks) {
+		const backlinksMap = await getCachedBacklinksIndex(index);
+		const refs = backlinksMap.get(currentPage.routePath) ?? [];
+		const html = renderBacklinksHtml(refs);
+		if (html) {
+			tree.children.push({ type: "html", value: html });
+		}
+	}
+
+	// Wrap the entire page content in a classed div when cssclasses are set.
+	// This mirrors Obsidian's behaviour where cssclasses appear on the note container.
+	if (currentPage.cssclasses.length > 0) {
+		const classes = currentPage.cssclasses.map(escapeHtmlAttribute).join(" ");
+		tree.children.unshift({
+			type: "html",
+			value: `<div class="${classes}">`,
 		});
-
-		if (options.enableBacklinks) {
-			const backlinksMap = await getCachedBacklinksIndex(index);
-			const refs = backlinksMap.get(currentPage.routePath) ?? [];
-			const html = renderBacklinksHtml(refs);
-			if (html) {
-				tree.children.push({ type: "html", value: html });
-			}
-		}
-
-		// Wrap the entire page content in a classed div when cssclasses are set.
-		// This mirrors Obsidian's behaviour where cssclasses appear on the note container.
-		if (currentPage.cssclasses.length > 0) {
-			const classes = currentPage.cssclasses.map(escapeHtmlAttribute).join(" ");
-			tree.children.unshift({
-				type: "html",
-				value: `<div class="${classes}">`,
-			});
-			tree.children.push({ type: "html", value: "</div>" });
-		}
-	};
+		tree.children.push({ type: "html", value: "</div>" });
+	}
+}
 
 function getCurrentFilePath(file: VFile): string | undefined {
 	const pathFromFile =
@@ -751,25 +799,36 @@ function parseSizeAttr(sizeParam: string): string {
  * Tries the file relative to the current markdown file, then relative to
  * docsRoot. Falls back to a root-relative path if neither is found on disk.
  */
+interface MediaResolveResult {
+	url: string;
+	found: boolean;
+}
+
 function resolveMediaSrc(
 	target: string,
 	docsRoot: string,
 	currentFilePath: string,
-): string {
+): MediaResolveResult {
 	const tryRelToFile = path.resolve(path.dirname(currentFilePath), target);
 	if (fs.existsSync(tryRelToFile)) {
 		const rel = path.relative(docsRoot, tryRelToFile).replace(/\\/g, "/");
 		if (!rel.startsWith("..")) {
-			return `/${rel}`;
+			return { url: `/${rel}`, found: true };
 		}
 	}
 
 	const tryRelToRoot = path.resolve(docsRoot, target);
 	if (fs.existsSync(tryRelToRoot)) {
-		return `/${path.relative(docsRoot, tryRelToRoot).replace(/\\/g, "/")}`;
+		return {
+			url: `/${path.relative(docsRoot, tryRelToRoot).replace(/\\/g, "/")}`,
+			found: true,
+		};
 	}
 
-	return target.startsWith("/") ? target : `/${target}`;
+	return {
+		url: target.startsWith("/") ? target : `/${target}`,
+		found: false,
+	};
 }
 
 /**
@@ -798,12 +857,21 @@ function resolveWikilinksInText(
 		}
 
 		const parsed = parseWikiLink(match.inner, match.fullMatch);
-		const resolved = resolveWikiLink(parsed, { currentPage, index, options });
 
-		if (resolved.status === "ok" && resolved.href && resolved.label) {
-			result += `<a href="${escapeHtmlAttribute(resolved.href)}">${escapeHtmlText(resolved.label)}</a>`;
-		} else {
+		if (parsed.isEmbed) {
 			result += match.fullMatch;
+		} else {
+			const resolved = resolveWikiLink(parsed, {
+				currentPage,
+				index,
+				options,
+			});
+
+			if (resolved.status === "ok" && resolved.href && resolved.label) {
+				result += `<a href="${escapeHtmlAttribute(resolved.href)}">${escapeHtmlText(resolved.label)}</a>`;
+			} else {
+				result += match.fullMatch;
+			}
 		}
 
 		cursor = match.end;
