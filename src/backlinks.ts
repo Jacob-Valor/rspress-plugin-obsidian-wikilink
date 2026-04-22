@@ -10,8 +10,8 @@ const WIKILINK_RE = /!?\[\[([^\]]+?)\]\]/g;
 const backlinksCache = new WeakMap<ContentIndex, Map<string, BacklinkRef[]>>();
 
 export interface BacklinkRef {
-	routePath: string;
-	title: string;
+  routePath: string;
+  title: string;
 }
 
 /**
@@ -19,14 +19,14 @@ export interface BacklinkRef {
  * result when the index object hasn't changed (same reference = same files).
  */
 export async function getCachedBacklinksIndex(
-	index: ContentIndex,
+  index: ContentIndex,
 ): Promise<Map<string, BacklinkRef[]>> {
-	const cached = backlinksCache.get(index);
-	if (cached) return cached;
+  const cached = backlinksCache.get(index);
+  if (cached) return cached;
 
-	const result = await buildBacklinksIndex(index);
-	backlinksCache.set(index, result);
-	return result;
+  const result = await buildBacklinksIndex(index);
+  backlinksCache.set(index, result);
+  return result;
 }
 
 /**
@@ -36,42 +36,42 @@ export async function getCachedBacklinksIndex(
  * pages, reducing resolution from O(links × pages) to O(links × 1) amortized.
  */
 export async function buildBacklinksIndex(
-	index: ContentIndex,
+  index: ContentIndex,
 ): Promise<Map<string, BacklinkRef[]>> {
-	const backlinks = new Map<string, BacklinkRef[]>();
+  const backlinks = new Map<string, BacklinkRef[]>();
 
-	for (const page of index.pages) {
-		let content: string;
-		try {
-			content = await fs.promises.readFile(page.absolutePath, "utf-8");
-		} catch (error) {
-			console.warn(
-				`[rspress-plugin-obsidian-wikilink:backlinks] Skipped ${page.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			continue;
-		}
+  for (const page of index.pages) {
+    let content: string;
+    try {
+      content = await fs.promises.readFile(page.absolutePath, "utf-8");
+    } catch (error) {
+      console.warn(
+        `[rspress-plugin-obsidian-wikilink:backlinks] Skipped ${page.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
 
-		// Deduplicate targets within a single source page
-		const seenTargets = new Set<string>();
+    // Deduplicate targets within a single source page
+    const seenTargets = new Set<string>();
 
-		for (const match of content.matchAll(WIKILINK_RE)) {
-			const inner = match[1] ?? "";
-			const target = inner.split("|")[0]?.split("#")[0]?.trim() ?? "";
-			if (!target) continue;
+    for (const match of content.matchAll(WIKILINK_RE)) {
+      const inner = match[1] ?? "";
+      const target = inner.split("|")[0]?.split("#")[0]?.trim() ?? "";
+      if (!target) continue;
 
-			const normalizedTarget = target.replace(/\\/g, "/").toLowerCase();
-			if (seenTargets.has(normalizedTarget)) continue;
-			seenTargets.add(normalizedTarget);
+      const normalizedTarget = target.replace(/\\/g, "/").toLowerCase();
+      if (seenTargets.has(normalizedTarget)) continue;
+      seenTargets.add(normalizedTarget);
 
-			const resolved = resolveBacklinkTarget(index, normalizedTarget);
-			for (const candidate of resolved) {
-				if (candidate.absolutePath === page.absolutePath) continue;
-				addBacklink(backlinks, candidate.routePath, page);
-			}
-		}
-	}
+      const resolved = resolveBacklinkTarget(index, normalizedTarget);
+      for (const candidate of resolved) {
+        if (candidate.absolutePath === page.absolutePath) continue;
+        addBacklink(backlinks, candidate.routePath, page);
+      }
+    }
+  }
 
-	return backlinks;
+  return backlinks;
 }
 
 /**
@@ -79,64 +79,64 @@ export async function buildBacklinksIndex(
  * Returns a deduplicated array of matching pages.
  */
 function resolveBacklinkTarget(
-	index: ContentIndex,
-	normalizedTarget: string,
+  index: ContentIndex,
+  normalizedTarget: string,
 ): ContentPage[] {
-	const seen = new Set<string>();
-	const results: ContentPage[] = [];
+  const seen = new Set<string>();
+  const results: ContentPage[] = [];
 
-	const addPage = (page: ContentPage) => {
-		if (!seen.has(page.absolutePath)) {
-			seen.add(page.absolutePath);
-			results.push(page);
-		}
-	};
+  const addPage = (page: ContentPage) => {
+    if (!seen.has(page.absolutePath)) {
+      seen.add(page.absolutePath);
+      results.push(page);
+    }
+  };
 
-	// Try exact pathKey lookup
-	const pathKey = normalizePathKey(normalizedTarget);
-	const exactPage = index.byPathKey.get(pathKey);
-	if (exactPage) {
-		addPage(exactPage);
-		return results;
-	}
+  // Try exact pathKey lookup
+  const pathKey = normalizePathKey(normalizedTarget);
+  const exactPage = index.byPathKey.get(pathKey);
+  if (exactPage) {
+    addPage(exactPage);
+    return results;
+  }
 
-	// Try basename lookup
-	const baseName = path.basename(pathKey) || pathKey;
-	const baseNameCandidates = index.byBaseName.get(baseName);
-	if (baseNameCandidates) {
-		for (const page of baseNameCandidates) {
-			addPage(page);
-		}
-	}
+  // Try basename lookup
+  const baseName = path.basename(pathKey) || pathKey;
+  const baseNameCandidates = index.byBaseName.get(baseName);
+  if (baseNameCandidates) {
+    for (const page of baseNameCandidates) {
+      addPage(page);
+    }
+  }
 
-	// Also try case-insensitive basename as fallback
-	if (results.length === 0) {
-		for (const [key, pages] of index.byBaseName) {
-			if (key.toLowerCase() === baseName) {
-				for (const page of pages) {
-					addPage(page);
-				}
-			}
-		}
-	}
+  // Also try case-insensitive basename as fallback
+  if (results.length === 0) {
+    for (const [key, pages] of index.byBaseName) {
+      if (key.toLowerCase() === baseName) {
+        for (const page of pages) {
+          addPage(page);
+        }
+      }
+    }
+  }
 
-	return results;
+  return results;
 }
 
 function addBacklink(
-	backlinks: Map<string, BacklinkRef[]>,
-	targetRoutePath: string,
-	sourcePage: ContentPage,
+  backlinks: Map<string, BacklinkRef[]>,
+  targetRoutePath: string,
+  sourcePage: ContentPage,
 ): void {
-	const existing = backlinks.get(targetRoutePath) ?? [];
-	const already = existing.some((e) => e.routePath === sourcePage.routePath);
-	if (!already) {
-		existing.push({
-			routePath: sourcePage.routePath,
-			title: sourcePage.title ?? sourcePage.baseName,
-		});
-		backlinks.set(targetRoutePath, existing);
-	}
+  const existing = backlinks.get(targetRoutePath) ?? [];
+  const already = existing.some((e) => e.routePath === sourcePage.routePath);
+  if (!already) {
+    existing.push({
+      routePath: sourcePage.routePath,
+      title: sourcePage.title ?? sourcePage.baseName,
+    });
+    backlinks.set(targetRoutePath, existing);
+  }
 }
 
 /**
@@ -146,23 +146,23 @@ function addBacklink(
  * `.obsidian-backlinks` selectors in the bundled stylesheet.
  */
 export function renderBacklinksHtml(refs: BacklinkRef[]): string {
-	if (refs.length === 0) return "";
-	const items = refs
-		.map(
-			(r) =>
-				`<li><a href="${escapeHtmlAttribute(r.routePath)}">${escapeHtmlText(r.title)}</a></li>`,
-		)
-		.join("\n");
-	return `<div class="obsidian-backlinks">\n<h2>Backlinks</h2>\n<ul>\n${items}\n</ul>\n</div>`;
+  if (refs.length === 0) return "";
+  const items = refs
+    .map(
+      (r) =>
+        `<li><a href="${escapeHtmlAttribute(r.routePath)}">${escapeHtmlText(r.title)}</a></li>`,
+    )
+    .join("\n");
+  return `<div class="obsidian-backlinks">\n<h2>Backlinks</h2>\n<ul>\n${items}\n</ul>\n</div>`;
 }
 
 function escapeHtmlText(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function escapeHtmlAttribute(value: string): string {
-	return escapeHtmlText(value).replace(/"/g, "&quot;");
+  return escapeHtmlText(value).replace(/"/g, "&quot;");
 }
