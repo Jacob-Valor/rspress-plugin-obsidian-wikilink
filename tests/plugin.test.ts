@@ -34,6 +34,26 @@ const nestedTagsFixtureRoot = path.resolve(
 	process.cwd(),
 	"tests/fixtures/nested-tags",
 );
+const publishFixtureRoot = path.resolve(
+	process.cwd(),
+	"tests/fixtures/publish",
+);
+const complexYamlFixtureRoot = path.resolve(
+	process.cwd(),
+	"tests/fixtures/complex-yaml",
+);
+const recursiveTransclusionFixtureRoot = path.resolve(
+	process.cwd(),
+	"tests/fixtures/recursive-transclusion",
+);
+const circularTransclusionFixtureRoot = path.resolve(
+	process.cwd(),
+	"tests/fixtures/circular-transclusion",
+);
+const deepTransclusionFixtureRoot = path.resolve(
+	process.cwd(),
+	"tests/fixtures/deep-transclusion",
+);
 
 const DEFAULT_OPTIONS: NormalizedPluginOptions = {
 	onBrokenLink: "error",
@@ -491,6 +511,53 @@ describe("transclusion", () => {
 		const output = String(file);
 		expect(output).toContain('class="obsidian-transclusion"');
 		expect(output).toContain("Install steps");
+	});
+
+	test("recursively transcludes nested embeds", async () => {
+		const processor = makeProcessor(recursiveTransclusionFixtureRoot, {
+			enableTransclusion: true,
+		});
+		const file = await processor.process({
+			value: "![[guide/middle]]",
+			path: path.resolve(recursiveTransclusionFixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="obsidian-transclusion"');
+		expect(output).toContain("Middle content");
+		expect(output).toContain("Deep content here");
+	});
+
+	test("detects circular transclusion and preserves original syntax", async () => {
+		const processor = makeProcessor(circularTransclusionFixtureRoot, {
+			enableTransclusion: true,
+		});
+		const file = await processor.process({
+			value: "![[guide/a]]",
+			path: path.resolve(circularTransclusionFixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain("Content A");
+		expect(output).toContain("Content B");
+		expect(
+			file.messages.some((m) => String(m).includes("Circular transclusion")),
+		).toBe(true);
+	});
+
+	test("respects max transclusion depth", async () => {
+		const processor = makeProcessor(deepTransclusionFixtureRoot, {
+			enableTransclusion: true,
+		});
+		const file = await processor.process({
+			value: "![[guide/level1]]",
+			path: path.resolve(deepTransclusionFixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain("Level 1");
+		expect(output).toContain("Level 5");
+		expect(output).not.toContain("Level 6");
+		expect(
+			file.messages.some((m) => String(m).includes("Max transclusion depth")),
+		).toBe(true);
 	});
 });
 
@@ -1000,6 +1067,58 @@ describe("callout type coverage", () => {
 	});
 });
 
+describe("nested callouts", () => {
+	test("processes nested callout (post-order)", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!note] Outer\n> > [!tip] Inner\n> > Content",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('class="callout callout-note"');
+		expect(output).toContain('class="callout callout-tip"');
+		expect(output).toContain("📝 Outer");
+		expect(output).toContain("💡 Inner");
+		expect(output).toContain("Content");
+		// Inner callout must be nested inside outer (appear after outer's opening tag)
+		const outerIdx = output.indexOf("callout-note");
+		const innerIdx = output.indexOf("callout-tip");
+		expect(innerIdx).toBeGreaterThan(outerIdx);
+	});
+
+	test("processes triple-nested callouts", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value:
+				"> [!note] Level 1\n> > [!tip] Level 2\n> > > [!warning] Level 3\n> > > Deep",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain("callout-note");
+		expect(output).toContain("callout-tip");
+		expect(output).toContain("callout-warning");
+		// Verify inner-to-outer ordering
+		const idx1 = output.indexOf("callout-note");
+		const idx2 = output.indexOf("callout-tip");
+		const idx3 = output.indexOf("callout-warning");
+		expect(idx3).toBeGreaterThan(idx2);
+		expect(idx2).toBeGreaterThan(idx1);
+	});
+
+	test("processes nested callout with foldable state", async () => {
+		const processor = makeProcessor(fixtureRoot, { enableCallouts: true });
+		const file = await processor.process({
+			value: "> [!note]- Collapsed outer\n> > [!tip]+ Expanded inner\n> > Body",
+			path: path.resolve(fixtureRoot, "index.md"),
+		});
+		const output = String(file);
+		expect(output).toContain('<details class="callout callout-note"');
+		expect(output).toContain('<details class="callout callout-tip" open');
+		expect(output).toContain("Collapsed outer");
+		expect(output).toContain("Expanded inner");
+	});
+});
+
 describe("nested tag indexing", () => {
 	test("indexes the full nested tag path in page.tags", async () => {
 		const index = await buildContentIndex(nestedTagsFixtureRoot);
@@ -1255,7 +1374,9 @@ describe("error boundary", () => {
 
 		expect(String(file)).toContain('data-obsidian-embed="true"');
 		expect(file.messages).toHaveLength(1);
-		expect(String(file.messages[0])).toContain("Self-transclusion detected");
+		expect(String(file.messages[0])).toContain(
+			"Circular transclusion detected",
+		);
 	});
 });
 
@@ -1431,7 +1552,58 @@ describe("bundled stylesheet", () => {
 		expect(sourceStyles).toContain(".obsidian-backlinks");
 		expect(sourceStyles).toContain(".obsidian-transclusion");
 		expect(sourceStyles).toContain(".obsidian-embed");
+		expect(sourceStyles).toContain('html[theme="dark"]');
+		expect(sourceStyles).toContain("callout-note");
+		expect(sourceStyles).toContain("callout-tip");
+		expect(sourceStyles).toContain("callout-warning");
+		expect(sourceStyles).toContain("callout-danger");
+		expect(sourceStyles).toContain("callout-quote");
 		expect(distStyles.length).toBeGreaterThan(0);
 		expect(distStyles).toContain(".callout");
+		expect(distStyles).toContain('html[theme="dark"]');
+	});
+});
+
+describe("publish frontmatter", () => {
+	test("excludes pages with publish: false from index", async () => {
+		const index = await buildContentIndex(publishFixtureRoot);
+		expect(index.pages.length).toBe(1);
+		expect(index.byPathKey.has("published")).toBe(true);
+		expect(index.byPathKey.has("draft")).toBe(false);
+	});
+
+	test("includes pages without publish field (defaults to true)", async () => {
+		const index = await buildContentIndex(fixtureRoot);
+		expect(index.pages.length).toBeGreaterThan(0);
+	});
+});
+
+describe("complex yaml frontmatter", () => {
+	test("parses multi-line arrays and inline arrays correctly", async () => {
+		const index = await buildContentIndex(complexYamlFixtureRoot);
+		const page = index.byPathKey.get("complex");
+
+		expect(page?.title).toBe("Complex YAML Test");
+		expect(page?.aliases).toEqual(["Complex Alias One", "Complex Alias Two"]);
+		expect(page?.tags).toEqual(["obsidian", "tutorial", "advanced"]);
+		expect(page?.cssclasses).toEqual(["custom-layout", "dark-theme"]);
+		expect(page?.publish).toBe(true);
+	});
+
+	test("parses inline yaml arrays", async () => {
+		const index = await buildContentIndex(complexYamlFixtureRoot);
+		const page = index.byPathKey.get("inline");
+
+		expect(page?.title).toBe("Inline YAML Test");
+		expect(page?.aliases).toEqual(["Inline Alias", "Another Alias"]);
+		expect(page?.tags).toEqual(["inline"]);
+		expect(page?.cssclasses).toEqual(["class-one", "class-two"]);
+		expect(page?.publish).toBe(true);
+	});
+
+	test("parses publish: yes string as true", async () => {
+		const index = await buildContentIndex(complexYamlFixtureRoot);
+		const page = index.byPathKey.get("inline");
+		expect(page?.publish).toBe(true);
 	});
 });

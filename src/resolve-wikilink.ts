@@ -11,7 +11,11 @@ import type {
 	ResolvedWikiLink,
 	WikiSubpath,
 } from "./types.ts";
-import { normalizePathKey } from "./utils.ts";
+import {
+	formatAvailableBlocks,
+	formatAvailableHeadings,
+	normalizePathKey,
+} from "./utils.ts";
 
 /**
  * Resolve a parsed wikilink against the content index, returning a
@@ -116,9 +120,13 @@ function resolveCurrentPageReference(
 
 	const resolvedSubpath = resolveSubpath(page, subpath);
 	if (!resolvedSubpath) {
+		const suffix =
+			subpath.kind === "heading"
+				? formatAvailableHeadings(page)
+				: formatAvailableBlocks(page);
 		return {
 			status: "broken-anchor",
-			message: `Unable to resolve ${describeSubpath(subpath)} in ${page.relativePath}.`,
+			message: `Unable to resolve ${describeSubpath(subpath)} in ${page.relativePath}.${suffix}`,
 		};
 	}
 
@@ -147,9 +155,13 @@ function resolveAgainstPage(
 
 	const resolvedSubpath = resolveSubpath(page, parsed.subpath);
 	if (!resolvedSubpath) {
+		const suffix =
+			parsed.subpath.kind === "heading"
+				? formatAvailableHeadings(page)
+				: formatAvailableBlocks(page);
 		return {
 			status: "broken-anchor",
-			message: `Unable to resolve ${describeSubpath(parsed.subpath)} in ${page.relativePath}.`,
+			message: `Unable to resolve ${describeSubpath(parsed.subpath)} in ${page.relativePath}.${suffix}`,
 		};
 	}
 
@@ -178,41 +190,36 @@ function resolveHeadingSlug(
 ): string | undefined {
 	const normalizedAnchor = normalizeLookupValue(anchor);
 
-	for (const heading of page.headings) {
-		if (
-			heading.explicitId &&
-			normalizeLookupValue(heading.explicitId) === normalizedAnchor
-		) {
-			return heading.explicitId;
-		}
+	// Attempt 1: explicit heading ID match — O(1) via pre-computed map.
+	const explicitEntry = page.headingBySlug.get(normalizedAnchor);
+	if (explicitEntry?.explicitId) {
+		return explicitEntry.explicitId;
 	}
 
 	const slugifiedAnchor = slugifyHeading(anchor);
+
+	// Attempt 2: slug match — O(1) via pre-computed map.
+	const slugEntry = page.headingBySlug.get(slugifiedAnchor);
+	if (slugEntry) {
+		return slugEntry.explicitId ?? slugEntry.slug;
+	}
+
+	// Attempt 3: raw text match — O(1) via pre-computed map.
+	const textEntry = page.headingByText.get(normalizedAnchor);
+	if (textEntry) {
+		return textEntry.explicitId ?? textEntry.slug;
+	}
+
+	// Attempt 4: emoji-preserving slug prefix fallback.
+	// Obsidian may preserve emoji in heading IDs, but github-slugger strips
+	// them, so the slugged anchor may be a prefix of the stored slug.
 	for (const heading of page.headings) {
-		if (heading.slug === slugifiedAnchor) {
+		if (heading.slug.startsWith(`${slugifiedAnchor}-`)) {
 			return heading.explicitId ?? heading.slug;
 		}
 	}
 
-	for (const heading of page.headings) {
-		if (normalizeLookupValue(heading.rawText) === normalizedAnchor) {
-			return heading.explicitId ?? heading.slug;
-		}
-	}
-
-	// Fallback: try matching raw anchor text (with emoji) against heading slugs
-	// Obsidian may preserve emoji in IDs, but github-slugger strips them
-	const slugifiedRaw = slugifyHeading(anchor);
-	for (const heading of page.headings) {
-		if (
-			heading.slug === slugifiedRaw ||
-			heading.slug.startsWith(`${slugifiedRaw}-`)
-		) {
-			return heading.explicitId ?? heading.slug;
-		}
-	}
-
-	// Fallback: try case-insensitive match on raw text (for Unicode headings)
+	// Attempt 5: case-insensitive substring match (for Unicode headings).
 	for (const heading of page.headings) {
 		if (heading.rawText.toLowerCase().includes(anchor.toLowerCase())) {
 			return heading.explicitId ?? heading.slug;
@@ -365,23 +372,18 @@ function resolveCaseInsensitivePage(
 		return undefined;
 	}
 
-	const pathMatches = context.index.pages.filter(
-		(page) => page.pathKey.toLowerCase() === normalizedTarget,
-	);
-	const pathResolution = resolveCandidateSet(
-		pathMatches,
-		target,
-		"a more specific path",
-	);
-	if (pathResolution) {
-		return pathResolution;
+	const pathCandidates = context.index.byPathKeyCI.get(normalizedTarget);
+	if (pathCandidates) {
+		return resolveCandidateSet(pathCandidates, target, "a more specific path");
 	}
 
 	const baseName = path.basename(normalizedTarget);
-	const baseMatches = context.index.pages.filter(
-		(page) => page.baseName.toLowerCase() === baseName,
+	const baseCandidates = context.index.byBaseNameCI.get(baseName);
+	return resolveCandidateSet(
+		baseCandidates ?? [],
+		target,
+		"a path-qualified link",
 	);
-	return resolveCandidateSet(baseMatches, target, "a path-qualified link");
 }
 
 function normalizeFuzzyLookup(input: string): string {

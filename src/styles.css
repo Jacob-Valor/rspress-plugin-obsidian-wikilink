@@ -111,6 +111,66 @@ details.callout > summary.callout-title::-webkit-details-marker {
 	--callout-title-bg: rgba(158, 158, 158, 0.12);
 }
 
+/* ─── Dark mode ─────────────────────────────────────────────────────────── */
+/* Rspress sets html[theme="dark"] when dark mode is active. The default
+   callout background opacities (7% / 12%) are too subtle on dark backgrounds,
+   so we bump them to ~16% / 24% for better visibility. */
+
+html[theme="dark"] .callout {
+	background: var(--callout-bg, rgba(128, 128, 128, 0.16));
+}
+
+html[theme="dark"] .callout-title {
+	background: var(--callout-title-bg, rgba(128, 128, 128, 0.24));
+}
+
+html[theme="dark"] .callout-note {
+	--callout-bg: rgba(68, 138, 255, 0.16);
+	--callout-title-bg: rgba(68, 138, 255, 0.24);
+}
+html[theme="dark"] .callout-tip {
+	--callout-bg: rgba(0, 191, 165, 0.16);
+	--callout-title-bg: rgba(0, 191, 165, 0.24);
+}
+html[theme="dark"] .callout-info {
+	--callout-bg: rgba(0, 176, 255, 0.16);
+	--callout-title-bg: rgba(0, 176, 255, 0.24);
+}
+html[theme="dark"] .callout-success {
+	--callout-bg: rgba(0, 200, 83, 0.16);
+	--callout-title-bg: rgba(0, 200, 83, 0.24);
+}
+html[theme="dark"] .callout-question {
+	--callout-bg: rgba(100, 221, 23, 0.16);
+	--callout-title-bg: rgba(100, 221, 23, 0.24);
+}
+html[theme="dark"] .callout-warning,
+html[theme="dark"] .callout-caution {
+	--callout-bg: rgba(255, 145, 0, 0.16);
+	--callout-title-bg: rgba(255, 145, 0, 0.24);
+}
+html[theme="dark"] .callout-danger,
+html[theme="dark"] .callout-failure {
+	--callout-bg: rgba(255, 23, 68, 0.16);
+	--callout-title-bg: rgba(255, 23, 68, 0.24);
+}
+html[theme="dark"] .callout-bug {
+	--callout-bg: rgba(245, 0, 87, 0.16);
+	--callout-title-bg: rgba(245, 0, 87, 0.24);
+}
+html[theme="dark"] .callout-example {
+	--callout-bg: rgba(124, 77, 255, 0.16);
+	--callout-title-bg: rgba(124, 77, 255, 0.24);
+}
+html[theme="dark"] .callout-abstract {
+	--callout-bg: rgba(0, 176, 255, 0.16);
+	--callout-title-bg: rgba(0, 176, 255, 0.24);
+}
+html[theme="dark"] .callout-quote {
+	--callout-bg: rgba(158, 158, 158, 0.16);
+	--callout-title-bg: rgba(158, 158, 158, 0.24);
+}
+
 /* ─── Backlinks panel ───────────────────────────────────────────────────── */
 
 .obsidian-backlinks {

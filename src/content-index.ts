@@ -1,8 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import GithubSlugger from "github-slugger";
+import matter from "gray-matter";
+import { findWikilinkMatches } from "./parse-wikilink.ts";
 import { normalizeLookupValue, stripMarkdownFormatting } from "./slug.ts";
 import type {
+	BacklinkRef,
 	BlockEntry,
 	ContentIndex,
 	ContentPage,
@@ -11,10 +14,22 @@ import type {
 import { normalizeFsPath, normalizePathKey } from "./utils.ts";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
-const contentIndexCache = new Map<
-	string,
-	{ signature: string; index: ContentIndex }
->();
+
+/** Maximum number of content indexes to cache simultaneously. Beyond this
+ *  the least-recently-used entry is evicted. Rspress dev-server uses a single
+ *  root, but tests and tooling may call {@link getCachedContentIndex} with
+ *  many different directories in the same process. */
+const MAX_CACHED_INDEXES = 10;
+
+interface CacheEntry {
+	signature: string;
+	index: ContentIndex;
+}
+
+/** LRU cache keyed by resolved root directory. `Map` preserves insertion
+ *  order — on access we delete-then-set to move the entry to the end, and
+ *  evict the first entry when over capacity. */
+const contentIndexCache = new Map<string, CacheEntry>();
 
 interface MarkdownFileEntry {
 	absolutePath: string;
@@ -51,13 +66,25 @@ export async function getCachedContentIndex(
 		.map((file) => `${file.relativePath}:${file.mtimeMs}:${file.size}`)
 		.join("|");
 
+	// Bump existing entry to the end (most-recently-used position).
 	const cached = contentIndexCache.get(absoluteRoot);
 	if (cached?.signature === signature) {
+		contentIndexCache.delete(absoluteRoot);
+		contentIndexCache.set(absoluteRoot, cached);
 		return cached.index;
 	}
 
 	const index = await buildContentIndexFromFiles(absoluteRoot, files);
 	contentIndexCache.set(absoluteRoot, { signature, index });
+
+	// Evict least-recently-used entry (first in insertion order) when over cap.
+	if (contentIndexCache.size > MAX_CACHED_INDEXES) {
+		const oldest = contentIndexCache.keys().next().value;
+		if (oldest !== undefined) {
+			contentIndexCache.delete(oldest);
+		}
+	}
+
 	return index;
 }
 
@@ -69,9 +96,16 @@ async function buildContentIndexFromFiles(
 		files.map((file) => buildContentPage(file)),
 	);
 	const pages: ContentPage[] = [];
+	const rawContentByPath = new Map<string, string>();
 	for (const result of settled) {
 		if (result.status === "fulfilled") {
-			pages.push(result.value);
+			if (result.value.page.publish) {
+				pages.push(result.value.page);
+				rawContentByPath.set(
+					result.value.page.absolutePath,
+					result.value.rawMarkdown,
+				);
+			}
 		} else {
 			console.warn(
 				`[rspress-plugin-obsidian-wikilink] Failed to index file: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
@@ -84,15 +118,22 @@ async function buildContentIndexFromFiles(
 	const byTitle = new Map<string, ContentPage[]>();
 	const byAlias = new Map<string, ContentPage[]>();
 	const byTag = new Map<string, ContentPage[]>();
+	const byPathKeyCI = new Map<string, ContentPage[]>();
+	const byBaseNameCI = new Map<string, ContentPage[]>();
 
 	for (const page of pages) {
 		byAbsolutePath.set(page.absolutePath, page);
 		byPathKey.set(page.pathKey, page);
 
+		const pathKeyLower = page.pathKey.toLowerCase();
+		pushNamedPage(byPathKeyCI, pathKeyLower, page);
+
 		if (page.baseName.length > 0) {
 			const existing = byBaseName.get(page.baseName) ?? [];
 			existing.push(page);
 			byBaseName.set(page.baseName, existing);
+
+			pushNamedPage(byBaseNameCI, page.baseName.toLowerCase(), page);
 		}
 
 		if (page.title) {
@@ -114,6 +155,23 @@ async function buildContentIndexFromFiles(
 		}
 	}
 
+	const backlinks = new Map<string, BacklinkRef[]>();
+	for (const page of pages) {
+		for (const normalizedTarget of page.wikilinkTargets) {
+			const resolved = resolveBacklinkTarget(
+				byPathKey,
+				byPathKeyCI,
+				byBaseName,
+				byBaseNameCI,
+				normalizedTarget,
+			);
+			for (const candidate of resolved) {
+				if (candidate.absolutePath === page.absolutePath) continue;
+				addBacklinkEntry(backlinks, candidate.routePath, page);
+			}
+		}
+	}
+
 	return {
 		rootDir,
 		pages,
@@ -123,7 +181,83 @@ async function buildContentIndexFromFiles(
 		byTitle,
 		byAlias,
 		byTag,
+		byPathKeyCI,
+		byBaseNameCI,
+		rawContentByPath,
+		backlinks,
 	};
+}
+
+/**
+ * Resolve a normalized wikilink target against the completed lookup maps.
+ * Mirrors the logic in {@link buildBacklinksIndex} but works with raw maps
+ * rather than a ContentIndex wrapper.
+ */
+function resolveBacklinkTarget(
+	byPathKey: Map<string, ContentPage>,
+	byPathKeyCI: Map<string, ContentPage[]>,
+	byBaseName: Map<string, ContentPage[]>,
+	byBaseNameCI: Map<string, ContentPage[]>,
+	normalizedTarget: string,
+): ContentPage[] {
+	const seen = new Set<string>();
+	const results: ContentPage[] = [];
+
+	const addPage = (page: ContentPage) => {
+		if (!seen.has(page.absolutePath)) {
+			seen.add(page.absolutePath);
+			results.push(page);
+		}
+	};
+
+	const exactPage = byPathKey.get(normalizedTarget);
+	if (exactPage) {
+		addPage(exactPage);
+		return results;
+	}
+
+	const ciCandidates = byPathKeyCI.get(normalizedTarget);
+	if (ciCandidates) {
+		for (const page of ciCandidates) {
+			addPage(page);
+			return results;
+		}
+	}
+
+	const baseName = path.basename(normalizedTarget) || normalizedTarget;
+	const baseNameCandidates = byBaseName.get(baseName);
+	if (baseNameCandidates) {
+		for (const page of baseNameCandidates) {
+			addPage(page);
+		}
+	}
+
+	if (results.length === 0) {
+		const ciBaseCandidates = byBaseNameCI.get(baseName);
+		if (ciBaseCandidates) {
+			for (const page of ciBaseCandidates) {
+				addPage(page);
+			}
+		}
+	}
+
+	return results;
+}
+
+function addBacklinkEntry(
+	backlinks: Map<string, BacklinkRef[]>,
+	targetRoutePath: string,
+	sourcePage: ContentPage,
+): void {
+	const existing = backlinks.get(targetRoutePath) ?? [];
+	const already = existing.some((e) => e.routePath === sourcePage.routePath);
+	if (!already) {
+		existing.push({
+			routePath: sourcePage.routePath,
+			title: sourcePage.title ?? sourcePage.baseName,
+		});
+		backlinks.set(targetRoutePath, existing);
+	}
 }
 
 function scanMarkdownFiles(rootDir: string): MarkdownFileEntry[] {
@@ -189,17 +323,36 @@ function isRoutableRelativePath(relativePath: string): boolean {
 	return relativePath.split("/").every((segment) => !/^_[^_]/.test(segment));
 }
 
-async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
+async function buildContentPage(file: MarkdownFileEntry): Promise<{
+	page: ContentPage;
+	rawMarkdown: string;
+}> {
 	const markdown = await fs.promises.readFile(file.absolutePath, "utf-8");
 	const routePath = deriveRoutePath(file.relativePath);
 	const pathKey = normalizePathKey(file.relativePath);
 	const baseName = path.basename(pathKey);
-	const { title, aliases, tags, cssclasses, excerpt } =
+	const { title, aliases, tags, cssclasses, excerpt, publish } =
 		extractFrontmatterMetadata(markdown);
-	const headings = extractHeadings(markdown);
-	const blocks = extractBlocks(markdown);
 
-	return {
+	const lines = markdown.split(/\r?\n/);
+	const isContent = getContentLineFlags(lines);
+
+	const headings = extractHeadings(lines, isContent);
+
+	// Pre-extract wikilink targets while we have the raw content in memory.
+	const wikilinkTargets = extractWikilinkTargets(markdown);
+
+	const headingBySlug = new Map<string, HeadingEntry>();
+	const headingByText = new Map<string, HeadingEntry>();
+	for (const h of headings) {
+		headingBySlug.set(h.slug, h);
+		if (h.explicitId) headingBySlug.set(h.explicitId, h);
+		headingByText.set(normalizeLookupValue(h.rawText), h);
+	}
+
+	const blocks = extractBlocks(lines, isContent);
+
+	const page: ContentPage = {
 		absolutePath: file.absolutePath,
 		relativePath: file.relativePath,
 		routePath,
@@ -210,9 +363,15 @@ async function buildContentPage(file: MarkdownFileEntry): Promise<ContentPage> {
 		tags,
 		cssclasses,
 		excerpt,
+		publish,
 		headings,
+		wikilinkTargets,
+		headingBySlug,
+		headingByText,
 		blocks,
 	};
+
+	return { page, rawMarkdown: markdown };
 }
 
 function deriveRoutePath(relativePath: string): string {
@@ -253,11 +412,12 @@ function getContentLineFlags(lines: string[]): boolean[] {
 	return flags;
 }
 
-function extractHeadings(markdown: string): HeadingEntry[] {
+function extractHeadings(
+	lines: string[],
+	isContent: boolean[],
+): HeadingEntry[] {
 	const slugger = new GithubSlugger();
 	const headings: HeadingEntry[] = [];
-	const lines = markdown.split(/\r?\n/);
-	const isContent = getContentLineFlags(lines);
 
 	for (let index = 0; index < lines.length; index += 1) {
 		if (!isContent[index]) {
@@ -289,11 +449,9 @@ function extractHeadings(markdown: string): HeadingEntry[] {
 	return headings;
 }
 
-function extractBlocks(markdown: string): BlockEntry[] {
+function extractBlocks(lines: string[], isContent: boolean[]): BlockEntry[] {
 	const blocks: BlockEntry[] = [];
 	const seen = new Set<string>();
-	const lines = markdown.split(/\r?\n/);
-	const isContent = getContentLineFlags(lines);
 
 	for (let index = 0; index < lines.length; index += 1) {
 		if (!isContent[index]) {
@@ -322,6 +480,31 @@ function extractBlocks(markdown: string): BlockEntry[] {
 	}
 
 	return blocks;
+}
+
+/**
+ * Extract unique normalized wikilink targets from raw markdown content.
+ * The targets are lowercased, backslash-normalized, and stripped of alias
+ * (`|...`) and anchor (`#...`) fragments — matching exactly what the
+ * backlinks resolver needs, so it can skip regex scanning entirely.
+ */
+function extractWikilinkTargets(markdown: string): string[] {
+	const seen = new Set<string>();
+	const targets: string[] = [];
+
+	for (const match of findWikilinkMatches(markdown)) {
+		const inner = match.inner;
+		// Strip alias portion (after |) and anchor portion (after #)
+		const target = inner.split("|")[0]?.split("#")[0]?.trim() ?? "";
+		if (!target) continue;
+
+		const normalized = target.replace(/\\/g, "/").toLowerCase();
+		if (seen.has(normalized)) continue;
+		seen.add(normalized);
+		targets.push(normalized);
+	}
+
+	return targets;
 }
 
 function pushBlock(blocks: BlockEntry[], seen: Set<string>, id: string): void {
@@ -362,159 +545,74 @@ function pushHeading(
 	});
 }
 
+function normalizeStringField(value: unknown): string | undefined {
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		return trimmed.length > 0 ? trimmed : undefined;
+	}
+	return undefined;
+}
+
+function normalizeBooleanField(value: unknown): boolean {
+	if (typeof value === "boolean") {
+		return value;
+	}
+	if (typeof value === "string") {
+		const lowered = value.trim().toLowerCase();
+		return lowered === "true" || lowered === "yes" || lowered === "1";
+	}
+	if (typeof value === "number") {
+		return value !== 0;
+	}
+	return true;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+	if (!value) return [];
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (!trimmed) return [];
+		return [trimmed];
+	}
+	if (Array.isArray(value)) {
+		return value
+			.filter((v): v is string => typeof v === "string")
+			.map((s) => s.trim())
+			.filter((s) => s.length > 0);
+	}
+	return [];
+}
+
 function extractFrontmatterMetadata(markdown: string): {
 	title?: string;
 	aliases: string[];
 	tags: string[];
 	cssclasses: string[];
 	excerpt?: string;
+	publish: boolean;
 } {
-	const lines = markdown.split(/\r?\n/);
-	if (lines[0]?.trim() !== "---") {
-		return { aliases: [], tags: [], cssclasses: [] };
+	try {
+		const parsed = matter(markdown);
+		const data = parsed.data || {};
+
+		const title = normalizeStringField(data.title);
+		const excerpt = normalizeStringField(data.excerpt);
+		const aliases = normalizeStringArray(data.aliases ?? data.alias);
+		const tags = normalizeStringArray(data.tags ?? data.tag);
+		const cssclasses = normalizeStringArray(data.cssclasses ?? data.cssclass);
+		const publish = normalizeBooleanField(data.publish);
+
+		return {
+			title,
+			excerpt,
+			aliases: [...new Set(aliases)],
+			tags: [...new Set(tags)],
+			cssclasses: [...new Set(cssclasses)],
+			publish,
+		};
+	} catch {
+		return { aliases: [], tags: [], cssclasses: [], publish: true };
 	}
-
-	const closingIndex = lines.findIndex(
-		(line, index) => index > 0 && line.trim() === "---",
-	);
-	if (closingIndex < 0) {
-		console.warn(
-			`[rspress-plugin-obsidian-wikilink] Malformed frontmatter in file: opening "---" found but no closing "---". Frontmatter metadata will be ignored.`,
-		);
-		return { aliases: [], tags: [], cssclasses: [] };
-	}
-
-	let title: string | undefined;
-	let excerpt: string | undefined;
-	const aliases: string[] = [];
-	const tags: string[] = [];
-	const cssclasses: string[] = [];
-	let pendingListKey: "aliases" | "tags" | "cssclasses" | undefined;
-
-	for (let index = 1; index < closingIndex; index += 1) {
-		const line = lines[index] ?? "";
-
-		if (
-			pendingListKey === "aliases" ||
-			pendingListKey === "tags" ||
-			pendingListKey === "cssclasses"
-		) {
-			const listItemMatch = /^\s*-\s+(.+?)\s*$/.exec(line);
-			if (listItemMatch?.[1]) {
-				const itemValue = stripWrappingQuotes(listItemMatch[1].trim());
-				if (itemValue) {
-					if (pendingListKey === "aliases") {
-						aliases.push(itemValue);
-					} else if (pendingListKey === "tags") {
-						tags.push(itemValue);
-					} else {
-						cssclasses.push(itemValue);
-					}
-				}
-				continue;
-			}
-
-			if (line.trim().length === 0) {
-				continue;
-			}
-
-			pendingListKey = undefined;
-		}
-
-		const keyMatch = /^\s*([A-Za-z0-9_-]+)\s*:\s*(.*?)\s*$/.exec(line);
-		if (!keyMatch) {
-			continue;
-		}
-
-		const rawKey = keyMatch[1];
-		const rawValue = keyMatch[2];
-		if (typeof rawKey !== "string" || typeof rawValue !== "string") {
-			continue;
-		}
-
-		const key = rawKey.toLowerCase();
-		const value = rawValue.trim();
-
-		if (key === "title") {
-			const parsedTitle = stripWrappingQuotes(value);
-			if (parsedTitle) {
-				title = parsedTitle;
-			}
-			continue;
-		}
-
-		if (key === "excerpt") {
-			excerpt = stripWrappingQuotes(value) || undefined;
-			continue;
-		}
-
-		if (key === "aliases" || key === "alias") {
-			if (value.length === 0) {
-				pendingListKey = "aliases";
-				continue;
-			}
-			for (const alias of parseInlineAliases(value)) {
-				aliases.push(alias);
-			}
-			continue;
-		}
-
-		if (key === "tags" || key === "tag") {
-			if (value.length === 0) {
-				pendingListKey = "tags";
-				continue;
-			}
-			for (const tag of parseInlineAliases(value)) {
-				tags.push(tag);
-			}
-			continue;
-		}
-
-		if (key === "cssclasses" || key === "cssclass") {
-			if (value.length === 0) {
-				pendingListKey = "cssclasses";
-				continue;
-			}
-			for (const cls of parseInlineAliases(value)) {
-				cssclasses.push(cls);
-			}
-		}
-	}
-
-	return {
-		title,
-		excerpt,
-		aliases: [...new Set(aliases)],
-		tags: [...new Set(tags)],
-		cssclasses: [...new Set(cssclasses)],
-	};
-}
-
-function parseInlineAliases(value: string): string[] {
-	const trimmed = value.trim();
-	if (!trimmed) {
-		return [];
-	}
-
-	const listMatch = /^\[(.*)\]$/.exec(trimmed);
-	if (!listMatch) {
-		const alias = stripWrappingQuotes(trimmed);
-		return alias ? [alias] : [];
-	}
-
-	const listValue = listMatch[1];
-	if (typeof listValue !== "string") {
-		return [];
-	}
-
-	return listValue
-		.split(",")
-		.map((part) => stripWrappingQuotes(part.trim()))
-		.filter((part): part is string => part.length > 0);
-}
-
-function stripWrappingQuotes(value: string): string {
-	return value.replace(/^(["'])(.*)\1$/, "$2").trim();
 }
 
 function pushNamedPage(

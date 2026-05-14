@@ -8,7 +8,11 @@ import type {
 	Root,
 	Text,
 } from "mdast";
+import rehypeStringify from "rehype-stringify";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
 import { type RemarkPluginFactory, unistVisit } from "rspress-plugin-devkit";
+import { unified } from "unified";
 import type { Parent } from "unist";
 import type { VFile } from "vfile";
 import { getCachedBacklinksIndex, renderBacklinksHtml } from "./backlinks.ts";
@@ -22,7 +26,11 @@ import type {
 	NormalizedPluginOptions,
 	RemarkWikiLinkPluginOptions,
 } from "./types.ts";
-import { normalizeFsPath } from "./utils.ts";
+import {
+	formatAvailableBlocks,
+	formatAvailableHeadings,
+	normalizeFsPath,
+} from "./utils.ts";
 
 // Tags must start with a letter or underscore (not a digit) and must not be
 // preceded by a word character or "/" (prevents matching URL fragments,
@@ -42,6 +50,8 @@ const FOOTNOTE_DEF_PATTERN = /\[\^([^\]]+)\]:\s*(.*)$/gm;
 const INLINE_FOOTNOTE_PATTERN = /\^\[([^\]]+)\]/g;
 
 const WIKILINK_EMBED_PATTERN = /!\[\[([^\]]+)\]\]/g;
+
+const MAX_TRANSCLUSION_DEPTH = 5;
 
 const IMAGE_EXTS = new Set([
 	"png",
@@ -106,6 +116,98 @@ const SKIP_PARENT_TYPES = new Set([
 	"mdxTextExpression",
 ]);
 
+/**
+ * Resolve all wikilink tokens in `tree` by replacing them with `link` or
+ * `html` AST nodes. Operates synchronously so it can be reused inside
+ * transclusion handling.
+ *
+ * When `file` is provided, broken/ambiguous links are reported through the
+ * VFile diagnostic API. When omitted (e.g. for transcluded sub-documents),
+ * unresolved links are silently left as raw text.
+ */
+function resolveWikilinksInAst(
+	tree: Root,
+	currentPage: ContentPage,
+	index: ContentIndex,
+	options: NormalizedPluginOptions,
+	file?: VFile,
+): void {
+	const resolveOptions = {
+		enableFuzzyMatching: options.enableFuzzyMatching,
+		enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
+	};
+
+	unistVisit(tree, "text", (node, position, parent) => {
+		if (!parent || typeof position !== "number") {
+			return;
+		}
+
+		if (SKIP_PARENT_TYPES.has(parent.type)) {
+			return;
+		}
+
+		const matches = findWikilinkMatches(node.value);
+		if (matches.length === 0) {
+			return;
+		}
+
+		const replacementNodes: PhrasingContent[] = [];
+		let cursor = 0;
+
+		for (const match of matches) {
+			if (match.start > cursor) {
+				replacementNodes.push(
+					createTextNode(node.value.slice(cursor, match.start)),
+				);
+			}
+
+			const parsed = parseWikiLink(match.inner, match.fullMatch);
+			const resolved = resolveWikiLink(parsed, {
+				currentPage,
+				index,
+				options: resolveOptions,
+			});
+
+			if (resolved.status === "ok") {
+				const href = resolved.href;
+				const label = resolved.label;
+
+				if (href && label) {
+					replacementNodes.push(
+						parsed.isEmbed
+							? createEmbedNode(href, label)
+							: createLinkNode(href, label),
+					);
+				} else {
+					replacementNodes.push(createTextNode(parsed.raw));
+				}
+			} else {
+				if (file) {
+					reportDiagnostic(
+						file,
+						parsed.raw,
+						resolved.message ?? "Unable to resolve wikilink.",
+						resolved.status,
+						options,
+					);
+				}
+				replacementNodes.push(createTextNode(parsed.raw));
+			}
+
+			cursor = match.end;
+		}
+
+		if (cursor < node.value.length) {
+			replacementNodes.push(createTextNode(node.value.slice(cursor)));
+		}
+
+		const parentWithChildren = parent as Parent & {
+			children: PhrasingContent[];
+		};
+		parentWithChildren.children.splice(position, 1, ...replacementNodes);
+	});
+}
+
 export const remarkWikilink: RemarkPluginFactory<RemarkWikiLinkPluginOptions> =
 	({ getDocsRoot, options }) =>
 	async (tree: Root, file: VFile): Promise<void> => {
@@ -139,11 +241,6 @@ async function remarkWikilinkInner(
 		);
 		return;
 	}
-
-	const resolveOptions = {
-		enableFuzzyMatching: options.enableFuzzyMatching,
-		enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
-	};
 
 	// Strip Obsidian comments (%% ... %%) before all other transforms.
 	unistVisit(tree, "text", (node, position, parent) => {
@@ -409,282 +506,24 @@ async function remarkWikilinkInner(
 	}
 
 	if (options.enableCallouts) {
-		unistVisit(tree, "blockquote", (node, position, parent) => {
-			if (!parent || typeof position !== "number") {
-				return;
-			}
-
-			const bq = node as Blockquote;
-			const firstPara = bq.children[0];
-			if (!firstPara || firstPara.type !== "paragraph") {
-				return;
-			}
-
-			const firstText = firstPara.children.find(
-				(c): c is Text => c.type === "text",
-			);
-			if (!firstText) {
-				return;
-			}
-
-			const lines = firstText.value.split("\n");
-			const headerLine = lines[0] ?? "";
-			const calloutMatch = CALLOUT_HEADER_PATTERN.exec(headerLine);
-			if (!calloutMatch) {
-				return;
-			}
-
-			const rawType = calloutMatch[1]?.toLowerCase() ?? "note";
-			const calloutType = CALLOUT_TYPE_ALIASES[rawType] ?? rawType;
-			const foldState = calloutMatch[2]; // '+' | '-' | undefined
-			const calloutTitle = calloutMatch[3]?.trim() || rawType;
-			const icon = CALLOUT_ICONS[calloutType] ?? "📝";
-
-			const remainingLines = lines.slice(1);
-			if (remainingLines.length === 0) {
-				bq.children.shift();
-			} else {
-				firstText.value = remainingLines.join("\n");
-			}
-
-			const replacements: Root["children"] = buildCalloutNodes(
-				calloutType,
-				calloutTitle,
-				icon,
-				foldState,
-				bq.children as Root["children"],
-			);
-
-			const parentNode = parent as Parent & { children: Root["children"] };
-			parentNode.children.splice(position, 1, ...replacements);
-		});
+		processCallouts(tree);
 	}
 
 	if (options.enableMediaEmbeds || options.enableTransclusion) {
-		// Two-pass approach: collect nodes to process, then resolve async
-		interface EmbedWork {
-			node: Text;
-		}
-		const embedNodes: EmbedWork[] = [];
-
-		unistVisit(tree, "text", (node, _position, parent) => {
-			if (!parent || SKIP_PARENT_TYPES.has(parent.type)) return;
-			if (!node.value.includes("![[")) return;
-			const embedMatches = [...node.value.matchAll(WIKILINK_EMBED_PATTERN)];
-			if (embedMatches.length > 0) {
-				embedNodes.push({ node });
-			}
-		});
-
-		// Process all embed nodes with proper async file reads
-		for (const { node } of embedNodes) {
-			const text = node.value;
-			const embedMatches = [...text.matchAll(WIKILINK_EMBED_PATTERN)];
-			if (embedMatches.length === 0) continue;
-
-			let result = "";
-			let lastEnd = 0;
-
-			for (const match of embedMatches) {
-				const start = match.index ?? 0;
-				const fullMatch = match[0];
-				const inner = match[1] ?? "";
-
-				if (start > lastEnd) {
-					result += text.slice(lastEnd, start);
-				}
-
-				const pipeIdx = inner.indexOf("|");
-				const targetRaw = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
-				const sizeParam = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : "";
-				const target = targetRaw.trim();
-				const ext = target.split(".").pop()?.toLowerCase() ?? "";
-
-				if (options.enableMediaEmbeds && IMAGE_EXTS.has(ext)) {
-					const sizeAttr = parseSizeAttr(sizeParam);
-					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
-					if (!resolved.found) {
-						file.message(
-							`[rspress-plugin-obsidian-wikilink:media] Image "${target}" not found on disk for ${fullMatch}.`,
-						);
-					}
-					const src = escapeHtmlAttribute(resolved.url);
-					result += `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`;
-				} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
-					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
-					if (!resolved.found) {
-						file.message(
-							`[rspress-plugin-obsidian-wikilink:media] Audio "${target}" not found on disk for ${fullMatch}.`,
-						);
-					}
-					const src = escapeHtmlAttribute(resolved.url);
-					result += `<audio controls src="${src}"></audio>`;
-				} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
-					const sizeAttr = parseSizeAttr(sizeParam);
-					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
-					if (!resolved.found) {
-						file.message(
-							`[rspress-plugin-obsidian-wikilink:media] Video "${target}" not found on disk for ${fullMatch}.`,
-						);
-					}
-					const src = escapeHtmlAttribute(resolved.url);
-					result += `<video controls src="${src}"${sizeAttr}></video>`;
-				} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
-					const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
-					if (!resolved.found) {
-						file.message(
-							`[rspress-plugin-obsidian-wikilink:media] PDF "${target}" not found on disk for ${fullMatch}.`,
-						);
-					}
-					const src = escapeHtmlAttribute(resolved.url);
-					result += `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`;
-				} else if (options.enableTransclusion) {
-					const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
-						currentPage,
-						index,
-						options: resolveOptions,
-					});
-
-					if (resolved.status === "ok" && resolved.targetPage) {
-						// Self-transclusion guard
-						if (resolved.targetPage.absolutePath === currentPage.absolutePath) {
-							file.message(
-								`[rspress-plugin-obsidian-wikilink:transclusion] Self-transclusion detected: ${fullMatch} in "${currentPage.relativePath}".`,
-							);
-							result += fullMatch;
-						} else {
-							try {
-								const content = await fs.promises.readFile(
-									resolved.targetPage.absolutePath,
-									"utf-8",
-								);
-								const parsed = parseWikiLink(target, fullMatch);
-								let transcludedContent: string | undefined;
-
-								if (parsed.subpath) {
-									if (parsed.subpath.kind === "heading") {
-										transcludedContent = extractHeadingSection(
-											content,
-											parsed.subpath.value,
-										);
-									} else if (parsed.subpath.kind === "block") {
-										transcludedContent = extractBlockSection(
-											content,
-											parsed.subpath.value,
-										);
-									}
-
-									if (transcludedContent === undefined) {
-										file.message(
-											`[rspress-plugin-obsidian-wikilink:transclusion] ${parsed.subpath.kind === "heading" ? "Heading" : "Block"} "${parsed.subpath.value}" not found in "${resolved.targetPage.relativePath}" for ${fullMatch}; falling back to full page content.`,
-										);
-									}
-								}
-
-								if (transcludedContent === undefined) {
-									transcludedContent = stripFrontmatter(content);
-								}
-
-								transcludedContent = resolveWikilinksInText(
-									transcludedContent,
-									currentPage,
-									index,
-									resolveOptions,
-								);
-
-								result += `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedContent}\n</div>`;
-							} catch (error) {
-								file.message(
-									`[rspress-plugin-obsidian-wikilink:transclusion] Failed to read "${resolved.targetPage.relativePath}" for ${fullMatch}: ${error instanceof Error ? error.message : String(error)}`,
-								);
-								result += fullMatch;
-							}
-						}
-					} else {
-						result += fullMatch;
-					}
-				} else {
-					result += fullMatch;
-				}
-
-				lastEnd = start + fullMatch.length;
-			}
-
-			if (lastEnd < text.length) {
-				result += text.slice(lastEnd);
-			}
-
-			node.value = result;
-		}
+		await processEmbedsInTree(
+			tree,
+			currentPage,
+			index,
+			options,
+			file,
+			docsRoot,
+			currentFilePath,
+			new Set([currentPage.absolutePath]),
+			0,
+		);
 	}
 
-	unistVisit(tree, "text", (node, position, parent) => {
-		if (!parent || typeof position !== "number") {
-			return;
-		}
-
-		if (SKIP_PARENT_TYPES.has(parent.type)) {
-			return;
-		}
-
-		const matches = findWikilinkMatches(node.value);
-		if (matches.length === 0) {
-			return;
-		}
-
-		const replacementNodes: PhrasingContent[] = [];
-		let cursor = 0;
-
-		for (const match of matches) {
-			if (match.start > cursor) {
-				replacementNodes.push(
-					createTextNode(node.value.slice(cursor, match.start)),
-				);
-			}
-
-			const parsed = parseWikiLink(match.inner, match.fullMatch);
-			const resolved = resolveWikiLink(parsed, {
-				currentPage,
-				index,
-				options: resolveOptions,
-			});
-
-			if (resolved.status === "ok") {
-				const href = resolved.href;
-				const label = resolved.label;
-
-				if (href && label) {
-					replacementNodes.push(
-						parsed.isEmbed
-							? createEmbedNode(href, label)
-							: createLinkNode(href, label),
-					);
-				} else {
-					replacementNodes.push(createTextNode(parsed.raw));
-				}
-			} else {
-				reportDiagnostic(
-					file,
-					parsed.raw,
-					resolved.message ?? "Unable to resolve wikilink.",
-					resolved.status,
-					options,
-				);
-				replacementNodes.push(createTextNode(parsed.raw));
-			}
-
-			cursor = match.end;
-		}
-
-		if (cursor < node.value.length) {
-			replacementNodes.push(createTextNode(node.value.slice(cursor)));
-		}
-
-		const parentWithChildren = parent as Parent & {
-			children: PhrasingContent[];
-		};
-		parentWithChildren.children.splice(position, 1, ...replacementNodes);
-	});
+	resolveWikilinksInAst(tree, currentPage, index, options, file);
 
 	if (options.enableBacklinks) {
 		const backlinksMap = await getCachedBacklinksIndex(index);
@@ -704,6 +543,226 @@ async function remarkWikilinkInner(
 			value: `<div class="${classes}">`,
 		});
 		tree.children.push({ type: "html", value: "</div>" });
+	}
+}
+
+async function renderTranscludedHtml(
+	content: string,
+	targetPage: ContentPage,
+	index: ContentIndex,
+	options: NormalizedPluginOptions,
+	file: VFile,
+	docsRoot: string,
+	currentFilePath: string,
+	visited: Set<string>,
+	depth: number,
+): Promise<string> {
+	const transcludedAst = unified().use(remarkParse).parse(content) as Root;
+
+	await processEmbedsInTree(
+		transcludedAst,
+		targetPage,
+		index,
+		options,
+		file,
+		docsRoot,
+		currentFilePath,
+		visited,
+		depth,
+	);
+
+	resolveWikilinksInAst(transcludedAst, targetPage, index, options);
+
+	const htmlProcessor = unified()
+		.use(remarkRehype, { allowDangerousHtml: true })
+		.use(rehypeStringify, { allowDangerousHtml: true });
+	const hastTree = htmlProcessor.runSync(transcludedAst);
+	return htmlProcessor.stringify(hastTree);
+}
+
+async function processEmbedsInTree(
+	tree: Root,
+	currentPage: ContentPage,
+	index: ContentIndex,
+	options: NormalizedPluginOptions,
+	file: VFile,
+	docsRoot: string,
+	currentFilePath: string,
+	visited: Set<string>,
+	depth: number,
+): Promise<void> {
+	const resolveOptions = {
+		enableFuzzyMatching: options.enableFuzzyMatching,
+		enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
+	};
+
+	// Two-pass approach: collect nodes to process, then resolve async
+	interface EmbedWork {
+		node: Text;
+	}
+	const embedNodes: EmbedWork[] = [];
+
+	unistVisit(tree, "text", (node, _position, parent) => {
+		if (!parent || SKIP_PARENT_TYPES.has(parent.type)) return;
+		if (!node.value.includes("![[")) return;
+		const embedMatches = [...node.value.matchAll(WIKILINK_EMBED_PATTERN)];
+		if (embedMatches.length > 0) {
+			embedNodes.push({ node });
+		}
+	});
+
+	// Process all embed nodes with proper async file reads
+	for (const { node } of embedNodes) {
+		const text = node.value;
+		const embedMatches = [...text.matchAll(WIKILINK_EMBED_PATTERN)];
+		if (embedMatches.length === 0) continue;
+
+		let result = "";
+		let lastEnd = 0;
+
+		for (const match of embedMatches) {
+			const start = match.index ?? 0;
+			const fullMatch = match[0];
+			const inner = match[1] ?? "";
+
+			if (start > lastEnd) {
+				result += text.slice(lastEnd, start);
+			}
+
+			const pipeIdx = inner.indexOf("|");
+			const targetRaw = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
+			const sizeParam = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : "";
+			const target = targetRaw.trim();
+			const ext = target.split(".").pop()?.toLowerCase() ?? "";
+
+			if (options.enableMediaEmbeds && IMAGE_EXTS.has(ext)) {
+				const sizeAttr = parseSizeAttr(sizeParam);
+				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+				if (!resolved.found) {
+					file.message(
+						`[rspress-plugin-obsidian-wikilink:media] Image "${target}" not found on disk for ${fullMatch}.`,
+					);
+				}
+				const src = escapeHtmlAttribute(resolved.url);
+				result += `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`;
+			} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
+				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+				if (!resolved.found) {
+					file.message(
+						`[rspress-plugin-obsidian-wikilink:media] Audio "${target}" not found on disk for ${fullMatch}.`,
+					);
+				}
+				const src = escapeHtmlAttribute(resolved.url);
+				result += `<audio controls src="${src}"></audio>`;
+			} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
+				const sizeAttr = parseSizeAttr(sizeParam);
+				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+				if (!resolved.found) {
+					file.message(
+						`[rspress-plugin-obsidian-wikilink:media] Video "${target}" not found on disk for ${fullMatch}.`,
+					);
+				}
+				const src = escapeHtmlAttribute(resolved.url);
+				result += `<video controls src="${src}"${sizeAttr}></video>`;
+			} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
+				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
+				if (!resolved.found) {
+					file.message(
+						`[rspress-plugin-obsidian-wikilink:media] PDF "${target}" not found on disk for ${fullMatch}.`,
+					);
+				}
+				const src = escapeHtmlAttribute(resolved.url);
+				result += `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`;
+			} else if (options.enableTransclusion) {
+				const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
+					currentPage,
+					index,
+					options: resolveOptions,
+				});
+
+				if (resolved.status === "ok" && resolved.targetPage) {
+					if (visited.has(resolved.targetPage.absolutePath)) {
+						file.message(
+							`[rspress-plugin-obsidian-wikilink:transclusion] Circular transclusion detected: ${fullMatch} in "${currentPage.relativePath}".`,
+						);
+						result += fullMatch;
+					} else if (depth >= MAX_TRANSCLUSION_DEPTH) {
+						file.message(
+							`[rspress-plugin-obsidian-wikilink:transclusion] Max transclusion depth (${MAX_TRANSCLUSION_DEPTH}) reached for ${fullMatch} in "${currentPage.relativePath}".`,
+						);
+						result += fullMatch;
+					} else {
+						try {
+							const content = await fs.promises.readFile(
+								resolved.targetPage.absolutePath,
+								"utf-8",
+							);
+							const parsed = parseWikiLink(target, fullMatch);
+							let transcludedContent: string | undefined;
+
+							if (parsed.subpath) {
+								if (parsed.subpath.kind === "heading") {
+									transcludedContent = extractHeadingSection(
+										content,
+										parsed.subpath.value,
+									);
+								} else if (parsed.subpath.kind === "block") {
+									transcludedContent = extractBlockSection(
+										content,
+										parsed.subpath.value,
+									);
+								}
+
+								if (transcludedContent === undefined) {
+									const suffix =
+										parsed.subpath.kind === "heading"
+											? formatAvailableHeadings(resolved.targetPage)
+											: formatAvailableBlocks(resolved.targetPage);
+									file.message(
+										`[rspress-plugin-obsidian-wikilink:transclusion] ${parsed.subpath.kind === "heading" ? "Heading" : "Block"} "${parsed.subpath.value}" not found in "${resolved.targetPage.relativePath}" for ${fullMatch};${suffix} falling back to full page content.`,
+									);
+								}
+							}
+
+							if (transcludedContent === undefined) {
+								transcludedContent = stripFrontmatter(content);
+							}
+
+							const transcludedHtml = await renderTranscludedHtml(
+								transcludedContent,
+								resolved.targetPage,
+								index,
+								options,
+								file,
+								docsRoot,
+								resolved.targetPage.absolutePath,
+								new Set([...visited, resolved.targetPage.absolutePath]),
+								depth + 1,
+							);
+
+							result += `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedHtml}\n</div>`;
+						} catch (error) {
+							file.message(
+								`[rspress-plugin-obsidian-wikilink:transclusion] Failed to read "${resolved.targetPage.relativePath}" for ${fullMatch}: ${error instanceof Error ? error.message : String(error)}`,
+							);
+							result += fullMatch;
+						}
+					}
+				} else {
+					result += fullMatch;
+				}
+			} else {
+				result += fullMatch;
+			}
+
+			lastEnd = start + fullMatch.length;
+		}
+
+		if (lastEnd < text.length) {
+			result += text.slice(lastEnd);
+		}
+
+		node.value = result;
 	}
 }
 
@@ -832,56 +891,87 @@ function resolveMediaSrc(
 }
 
 /**
- * Resolve any wikilinks found inside a raw markdown string (e.g. transcluded
- * content) by replacing them with HTML anchor tags. Unresolvable links are
- * left as their original raw text.
+ * Find and process all callout blockquotes in the tree, processing
+ * innermost callouts first so that nested callouts are fully resolved
+ * before their parent is transformed.
+ *
+ * Standard unist-util-visit is pre-order (parents before children), which
+ * breaks nesting because replacing the outer blockquote removes the inner
+ * one from the traversal. This two-phase approach (collect first, then
+ * process in reverse) ensures correct nesting order.
  */
-function resolveWikilinksInText(
-	text: string,
-	currentPage: ContentPage,
-	index: ContentIndex,
-	options: Pick<
-		NormalizedPluginOptions,
-		"enableFuzzyMatching" | "enableCaseInsensitiveLookup"
-	>,
-): string {
-	const matches = findWikilinkMatches(text);
-	if (matches.length === 0) return text;
+function processCallouts(tree: Root): void {
+	interface CalloutEntry {
+		bq: Blockquote;
+		position: number;
+		parent: Parent & { children: Root["children"] };
+	}
 
-	let result = "";
-	let cursor = 0;
+	const stack: CalloutEntry[] = [];
 
-	for (const match of matches) {
-		if (match.start > cursor) {
-			result += text.slice(cursor, match.start);
-		}
+	unistVisit(tree, "blockquote", (node, position, parent) => {
+		if (!parent || typeof position !== "number") return;
 
-		const parsed = parseWikiLink(match.inner, match.fullMatch);
+		const bq = node as Blockquote;
+		const firstPara = bq.children[0];
+		if (!firstPara || firstPara.type !== "paragraph") return;
 
-		if (parsed.isEmbed) {
-			result += match.fullMatch;
+		const firstText = firstPara.children.find(
+			(c): c is Text => c.type === "text",
+		);
+		if (!firstText) return;
+
+		const lines = firstText.value.split("\n");
+		const headerLine = lines[0] ?? "";
+		if (!CALLOUT_HEADER_PATTERN.exec(headerLine)) return;
+
+		stack.push({
+			bq,
+			position,
+			parent: parent as Parent & { children: Root["children"] },
+		});
+	});
+
+	// Process innermost callouts first so nested ones are resolved before
+	// their parent is transformed. post-order ensures child blockquotes are
+	// still present in the parent's children when we process the parent.
+	for (const { bq, position, parent: parentNode } of stack.reverse()) {
+		const firstPara = bq.children[0];
+		if (!firstPara || firstPara.type !== "paragraph") continue;
+
+		const firstText = firstPara.children.find(
+			(c): c is Text => c.type === "text",
+		);
+		if (!firstText) continue;
+
+		const lines = firstText.value.split("\n");
+		const headerLine = lines[0] ?? "";
+		const calloutMatch = CALLOUT_HEADER_PATTERN.exec(headerLine);
+		if (!calloutMatch) continue;
+
+		const rawType = calloutMatch[1]?.toLowerCase() ?? "note";
+		const calloutType = CALLOUT_TYPE_ALIASES[rawType] ?? rawType;
+		const foldState = calloutMatch[2];
+		const calloutTitle = calloutMatch[3]?.trim() || rawType;
+		const icon = CALLOUT_ICONS[calloutType] ?? "📝";
+
+		const remainingLines = lines.slice(1);
+		if (remainingLines.length === 0) {
+			bq.children.shift();
 		} else {
-			const resolved = resolveWikiLink(parsed, {
-				currentPage,
-				index,
-				options,
-			});
-
-			if (resolved.status === "ok" && resolved.href && resolved.label) {
-				result += `<a href="${escapeHtmlAttribute(resolved.href)}">${escapeHtmlText(resolved.label)}</a>`;
-			} else {
-				result += match.fullMatch;
-			}
+			firstText.value = remainingLines.join("\n");
 		}
 
-		cursor = match.end;
-	}
+		const replacements: Root["children"] = buildCalloutNodes(
+			calloutType,
+			calloutTitle,
+			icon,
+			foldState,
+			bq.children as Root["children"],
+		);
 
-	if (cursor < text.length) {
-		result += text.slice(cursor);
+		parentNode.children.splice(position, 1, ...replacements);
 	}
-
-	return result;
 }
 
 /**
