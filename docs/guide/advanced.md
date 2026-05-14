@@ -145,7 +145,7 @@ Output:
 - `false` (default) — no backlinks appended
 - `true` — scans all pages for incoming links and appends a `<div class="obsidian-backlinks">` panel at the bottom of each page
 
-The backlinks index is cached per content-index snapshot, so it does not re-read all files on every page compile.
+The backlinks index is built during content indexing and stored on the `ContentIndex` object. No extra file reads or regex scans are needed at build time.
 
 ### `enableTransclusion`
 
@@ -309,13 +309,39 @@ Both are reachable via `[[Page#^my-block]]` and `[[Page#^inline-block]]`.
 
 The plugin reads these frontmatter fields from each page:
 
-| Field | Purpose |
-|-------|---------|
-| `title` | Used as a lookup key (`[[My Title]]`) and as the default label |
-| `aliases` | Additional lookup keys (`[[Alias Name]]`). Also accepts singular `alias` |
-| `tags` | Indexed in `byTag`; used to generate tag pages when `enableTagPages` is on. Also accepts singular `tag` |
-| `cssclasses` | Custom CSS classes applied to the page container. Also accepts singular `cssclass` |
-| `excerpt` | Page excerpt/description for SEO |
+| Field | Purpose | Default |
+|-------|---------|---------|
+| `title` | Used as a lookup key (`[[My Title]]`) and as the default label | — |
+| `aliases` | Additional lookup keys (`[[Alias Name]]`). Also accepts singular `alias` | `[]` |
+| `tags` | Indexed in `byTag`; used to generate tag pages when `enableTagPages` is on. Also accepts singular `tag` | `[]` |
+| `cssclasses` | Custom CSS classes applied to the page container. Also accepts singular `cssclass` | `[]` |
+| `excerpt` | Page excerpt/description for SEO | — |
+| `publish` | Set to `false` to exclude the page from indexing | `true` |
+
+### `publish: false` — Draft Pages
+
+The `publish` field controls whether a page is included in the content index:
+
+```yaml
+---
+title: Work in Progress
+tags:
+  - draft
+publish: false
+---
+```
+
+When `publish` is `false`:
+- The page is excluded from all lookup tables (`byPathKey`, `byBaseName`, `byTitle`, `byAlias`, `byTag`)
+- Wikilinks pointing to the page are treated as broken links
+- The page does not appear in tag index pages or backlinks panels
+- Other pages cannot transclude its content
+
+Accepted values:
+- `true` / `yes` / `1` — page is included (default when field is absent)
+- `false` / `no` / `0` — page is excluded
+
+YAML strings are case-insensitive: `publish: "False"` and `publish: "No"` both exclude the page.
 
 ## Debugging
 
@@ -327,6 +353,71 @@ pluginObsidianWikiLink({
   onAmbiguousLink: "warn",
 });
 ```
+
+## Troubleshooting & FAQ
+
+### My build fails with "Unable to resolve wikilink target"
+
+The plugin's default `onBrokenLink: "error"` stops the build on any unresolvable wikilink. To find which links are broken:
+
+```ts
+pluginObsidianWikiLink({
+  onBrokenLink: "warn",
+  onAmbiguousLink: "warn",
+});
+```
+
+With `"warn"`, the build continues and each broken link prints a message showing exactly which page and target are problematic. The broken-anchor variant now lists available headings/blocks to help you find the right name.
+
+### My `[[Page]]` wikilink reports as ambiguous
+
+Multiple pages share the same filename (e.g. `docs/guide/getting-started.md` and `docs/tutorial/getting-started.md`). Fix by using a path-qualified link: `[[guide/getting-started]]` instead of `[[getting-started]]`.
+
+### Transcluded content shows "Heading not found" but the heading exists
+
+The heading matching is case-sensitive by default and respects exact text including punctuation. Enable fuzzy fallbacks:
+
+```ts
+pluginObsidianWikiLink({
+  enableFuzzyMatching: true,
+  enableCaseInsensitiveLookup: true,
+});
+```
+
+Or check the available headings listed in the diagnostic message — you may have a subtle character difference.
+
+### My `![[image.png|300x200]]` renders as a broken embed anchor
+
+The file isn't found on disk. The plugin resolves media paths in this order:
+1. Relative to the current markdown file
+2. Relative to the docs root
+3. As a root-relative URL (fallback, with a warning)
+
+Move the file into your docs directory or update the path.
+
+### Callouts render as plain blockquotes
+
+Callouts require `enableCallouts: true` in the plugin options. All features except wikilinks, comments, highlights, and footnotes are opt-in.
+
+### My `publish: false` page still appears in the build
+
+The `publish` field excludes a page from the **content index** — it won't appear in search, tag pages, or backlinks. It may still be rendered by Rspress if it's in the docs directory. To fully exclude a page, move it outside the docs root or prefix the filename with an underscore (Rspress convention).
+
+### Footnotes render as raw `[^1]` text
+
+Footnote definitions must match the pattern `[^label]: definition text` with a colon after the label. Single-word definitions like `[^a]: Alpha` can be misinterpreted by the remark parser as link definitions. Use multi-word prose: `[^alpha]: Alpha definition here.`
+
+### Memory usage grows when building many documentation sites in one process
+
+The content index cache is bounded to 10 entries with LRU eviction. If you need more simultaneous cached indexes, adjust `MAX_CACHED_INDEXES` in the source.
+
+### I found a bug or have a feature request
+
+Open an issue at [github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/issues](https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/issues). See the [Contributing Guide](https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/blob/main/.github/CONTRIBUTING.md) for development workflow and commit conventions.
+
+## Changelog
+
+See the [CHANGELOG](https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/blob/main/CHANGELOG.md) for version history and release notes.
 
 ## Next Steps
 

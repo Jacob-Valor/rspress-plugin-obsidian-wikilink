@@ -17,12 +17,8 @@ export function stripMarkdownFormatting(input: string): string {
  * without counter suffixes (each call is independent).
  */
 export function slugifyHeading(input: string): string {
-	sluggerInstance.reset();
-	return sluggerInstance.slug(stripMarkdownFormatting(input));
+	return new GithubSlugger().slug(stripMarkdownFormatting(input));
 }
-
-/** Shared slugger instance, reset before each use to avoid allocation. */
-const sluggerInstance = new GithubSlugger();
 
 export function normalizeLookupValue(input: string): string {
 	return input.trim().replace(/\s+/g, " ").toLowerCase();

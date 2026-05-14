@@ -58,6 +58,18 @@ export default defineConfig({
 | `[[#Heading]]` | Link to heading in current page |
 | `[[Page#^block]]` | Block reference (standalone or inline) |
 
+## Heading Preview
+
+When you hover over a wikilink that points to a heading (`[[Page#Heading]]` or `[[#Heading]]`), the browser shows a tooltip with a preview of the section content. The preview is extracted during the content indexing phase — it picks up the first ~200 characters of plain text following each heading.
+
+```markdown
+[[getting-started#Install|Install guide]]
+
+<!-- Hover shows: "Install steps. ^install-block." -->
+```
+
+No configuration needed — this works for every heading wikilink out of the box.
+
 ## Embed & Transclusion Syntax
 
 Enable with `enableTransclusion: true` and `enableMediaEmbeds: true`:
@@ -124,6 +136,7 @@ The plugin reads these frontmatter fields from each page:
 | `tags` | Tag page generation and categorization. Also accepts singular `tag` |
 | `cssclasses` | Custom CSS classes applied to the page container |
 | `excerpt` | Page excerpt/description for SEO |
+| `publish` | Set to `false` to exclude the page from the index |
 
 ```yaml
 ---
@@ -140,6 +153,27 @@ cssclasses:
 excerpt: A brief description of this page
 ---
 ```
+
+### Draft Pages with `publish: false`
+
+Add `publish: false` to frontmatter to keep a page out of the content index:
+
+```yaml
+---
+title: Rough Draft
+tags:
+  - draft
+publish: false
+---
+```
+
+Pages with `publish: false` are excluded from:
+- Wikilink resolution (other pages cannot link to them)
+- Tag page generation
+- Backlinks index
+- Content lookup tables
+
+If no `publish` field is set, the page defaults to being included.
 
 ## Optional Features
 
@@ -176,4 +210,5 @@ pluginObsidianWikiLink({
 ## Next Steps
 
 - Explore [[advanced|Advanced Usage]] for all configuration options in detail
+- See [[examples|Live Examples]] to watch the plugin features in action
 - See the [[api|API Reference]] for programmatic usage

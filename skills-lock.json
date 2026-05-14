@@ -6,20 +6,124 @@
       "sourceType": "well-known",
       "computedHash": "c20fe20eb84bb56fd5a96eae6e36c5fd8d38f989818a4944f8a08140fe5e7a5b"
     },
+    "migrate-to-rsbuild": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/migrate-to-rsbuild/SKILL.md",
+      "computedHash": "391e1f94788f3b60e65b393b0637cf4555f9e83b19189427a00dfaa19425586b"
+    },
+    "migrate-to-rslib": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/migrate-to-rslib/SKILL.md",
+      "computedHash": "ff7b05151ec67162a2b0725d6553110daec71529ea268276111cb44b050d19f7"
+    },
+    "migrate-to-rstest": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/migrate-to-rstest/SKILL.md",
+      "computedHash": "aea9f7a54fcbf5b611eec150b0da4b85c6583ff6b943f3ae6dd820c86df6966b"
+    },
+    "pr-creator": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/pr-creator/SKILL.md",
+      "computedHash": "a632c60f135594b5ec098ce6196c85395e448ade27882292bf0b68f9192e8278"
+    },
+    "rsbuild-best-practices": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rsbuild-best-practices/SKILL.md",
+      "computedHash": "2f1de26a27367666c49d16b114d31dbf78dc71f02b3e0784b1e3bf90f4e6e90b"
+    },
+    "rsbuild-v2-upgrade": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rsbuild-v2-upgrade/SKILL.md",
+      "computedHash": "4bc74b1cda35f7b61cafcb831d4099deca8eecb4d7c0a1d2cb69a2412178038d"
+    },
+    "rsdoctor-analysis": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rsdoctor-analysis/SKILL.md",
+      "computedHash": "1646df360094d3c00e3e37593a579df9ee186c0edb7cb0e116723fe1169041d5"
+    },
+    "rslib-best-practices": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rslib-best-practices/SKILL.md",
+      "computedHash": "be776b5192c676c6d94f96063b9ee52d2545b9ba47dd8ae1a1afa78a2c19b507"
+    },
+    "rspack-best-practices": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspack-best-practices/SKILL.md",
+      "computedHash": "1fa1f81e135ff913271a538f995aa378649b22775a588a573c861cf7f507ebd5"
+    },
+    "rspack-debugging": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspack-debugging/SKILL.md",
+      "computedHash": "037ccda420d1a07ff1f7acf283edbe171a3373613fb12ff5de85bf2b63c3b653"
+    },
+    "rspack-split-chunks": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspack-split-chunks/SKILL.md",
+      "computedHash": "d93d64f4f3f58ac2b56c293a96954e540b6db512141c1fd0c61bfb9157e9cc50"
+    },
+    "rspack-tracing": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspack-tracing/SKILL.md",
+      "computedHash": "5e27625cebf063edeb1294052d899a4285c4281325893056d5c5835cabe651b2"
+    },
+    "rspack-v2-upgrade": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspack-v2-upgrade/SKILL.md",
+      "computedHash": "117b7c12d7d9cdcd24dd2739af036fac1b0fd8a90a424620ad2bb0a1f6b85bd7"
+    },
+    "rspress-best-practices": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspress-best-practices/SKILL.md",
+      "computedHash": "4e7ae99820cbe318bbaee92aa8b5ba115c41ea6727d4d109e1133e45a2b43368"
+    },
     "rspress-custom-theme": {
       "source": "rstackjs/agent-skills",
       "sourceType": "github",
+      "skillPath": "skills/rspress-custom-theme/SKILL.md",
       "computedHash": "7fe2fa67caabd3336adc635fbe97716d14ff22780d0046237d3b5086e8565277"
     },
     "rspress-description-generator": {
       "source": "rstackjs/agent-skills",
       "sourceType": "github",
+      "skillPath": "skills/rspress-description-generator/SKILL.md",
       "computedHash": "ca2693ca055d1b4e5903bdfacab522f46ca0e13cbc5db59e6c9589fdc8efc6ad"
+    },
+    "rspress-v2-upgrade": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rspress-v2-upgrade/SKILL.md",
+      "computedHash": "3a6360206053f8435e1a898a59b1e9619a985034d78c5b8aa0560d32834f1d74"
+    },
+    "rstest-best-practices": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rstest-best-practices/SKILL.md",
+      "computedHash": "f0b2092fa4696a8364b0ae15e44fa7752367bac01a2dd1b98223d01ffe001e04"
     },
     "semantic-release": {
       "source": "terrylica/cc-skills",
       "sourceType": "github",
       "computedHash": "278d64fc2c1405e40f12fc4b32d126e6cb5d36dede9ff3fcedd32a920072bf6b"
+    },
+    "storybook-rsbuild": {
+      "source": "rstackjs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/storybook-rsbuild/SKILL.md",
+      "computedHash": "b3fe65940d0b70893029f9112352a50a209ff8750c36249fd065faa7791efece"
     }
   }
 }

@@ -1,39 +1,46 @@
-import fs from "node:fs";
 import path from "node:path";
-import type { ContentIndex, ContentPage } from "./types.ts";
+import type { BacklinkRef, ContentIndex, ContentPage } from "./types.ts";
 import { normalizePathKey } from "./utils.ts";
 
-const WIKILINK_RE = /!?\[\[([^\]]+?)\]\]/g;
-
-// Keyed by the ContentIndex object itself — automatically invalidated when
-// getCachedContentIndex returns a new index after file changes.
-const backlinksCache = new WeakMap<ContentIndex, Map<string, BacklinkRef[]>>();
-
-export interface BacklinkRef {
-	routePath: string;
-	title: string;
-}
+export type { BacklinkRef };
 
 /**
- * Return the backlinks index for the given content index, reusing the cached
- * result when the index object hasn't changed (same reference = same files).
+ * Return the backlinks index for the given content index.
+ *
+ * Backlinks are now built during content indexing (see `buildContentIndex`)
+ * rather than as a separate pass, so this is a simple property access.
+ * The WeakMap cache here allows code that constructs a ContentIndex manually
+ * (without going through `buildContentIndex`) to still get cached results.
  */
+const manualBacklinksCache = new WeakMap<
+	ContentIndex,
+	Map<string, BacklinkRef[]>
+>();
+
 export async function getCachedBacklinksIndex(
 	index: ContentIndex,
 ): Promise<Map<string, BacklinkRef[]>> {
-	const cached = backlinksCache.get(index);
+	if (index.backlinks.size > 0 || index.pages.length === 0) {
+		return index.backlinks;
+	}
+
+	const cached = manualBacklinksCache.get(index);
 	if (cached) return cached;
 
 	const result = await buildBacklinksIndex(index);
-	backlinksCache.set(index, result);
+	manualBacklinksCache.set(index, result);
 	return result;
 }
 
 /**
  * Build a map from each page's routePath to the list of pages that link to it.
  *
- * Uses the content index lookup maps instead of brute-force iteration over all
- * pages, reducing resolution from O(links × pages) to O(links × 1) amortized.
+ * Uses pre-extracted wikilink targets (collected during content indexing) to
+ * skip regex scanning entirely — reduces per-page cost to just one Map lookup
+ * and a few O(1) resolution calls.
+ *
+ * Falls back to rawContentByPath for pages indexed before the wikilinkTargets
+ * field was added (e.g. during a version upgrade).
  */
 export async function buildBacklinksIndex(
 	index: ContentIndex,
@@ -41,28 +48,9 @@ export async function buildBacklinksIndex(
 	const backlinks = new Map<string, BacklinkRef[]>();
 
 	for (const page of index.pages) {
-		let content: string;
-		try {
-			content = await fs.promises.readFile(page.absolutePath, "utf-8");
-		} catch (error) {
-			console.warn(
-				`[rspress-plugin-obsidian-wikilink:backlinks] Skipped ${page.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			continue;
-		}
+		const targets = page.wikilinkTargets;
 
-		// Deduplicate targets within a single source page
-		const seenTargets = new Set<string>();
-
-		for (const match of content.matchAll(WIKILINK_RE)) {
-			const inner = match[1] ?? "";
-			const target = inner.split("|")[0]?.split("#")[0]?.trim() ?? "";
-			if (!target) continue;
-
-			const normalizedTarget = target.replace(/\\/g, "/").toLowerCase();
-			if (seenTargets.has(normalizedTarget)) continue;
-			seenTargets.add(normalizedTarget);
-
+		for (const normalizedTarget of targets) {
 			const resolved = resolveBacklinkTarget(index, normalizedTarget);
 			for (const candidate of resolved) {
 				if (candidate.absolutePath === page.absolutePath) continue;
@@ -92,12 +80,21 @@ function resolveBacklinkTarget(
 		}
 	};
 
-	// Try exact pathKey lookup
+	// Try exact pathKey lookup (the target was already lowercased for dedup,
+	// so use the case-insensitive map to handle mixed-case paths).
 	const pathKey = normalizePathKey(normalizedTarget);
 	const exactPage = index.byPathKey.get(pathKey);
 	if (exactPage) {
 		addPage(exactPage);
 		return results;
+	}
+
+	const ciCandidates = index.byPathKeyCI.get(pathKey);
+	if (ciCandidates) {
+		for (const page of ciCandidates) {
+			addPage(page);
+			return results;
+		}
 	}
 
 	// Try basename lookup
@@ -111,11 +108,10 @@ function resolveBacklinkTarget(
 
 	// Also try case-insensitive basename as fallback
 	if (results.length === 0) {
-		for (const [key, pages] of index.byBaseName) {
-			if (key.toLowerCase() === baseName) {
-				for (const page of pages) {
-					addPage(page);
-				}
+		const ciBaseCandidates = index.byBaseNameCI.get(baseName);
+		if (ciBaseCandidates) {
+			for (const page of ciBaseCandidates) {
+				addPage(page);
 			}
 		}
 	}

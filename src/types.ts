@@ -116,6 +116,10 @@ export interface HeadingEntry {
 	rawText: string;
 	slug: string;
 	explicitId?: string;
+	/** Short plain-text preview of the content following this heading
+	 *  (the first ~200 characters, markdown stripped). Used for tooltip
+	 *  previews on heading wikilinks. */
+	preview?: string;
 }
 
 /** A single block anchor indexed from a page. */
@@ -135,7 +139,14 @@ export interface ContentPage {
 	tags: string[];
 	cssclasses: string[];
 	excerpt?: string;
+	publish: boolean;
 	headings: HeadingEntry[];
+	/** Pre-extracted normalized wikilink targets from this page's content. */
+	wikilinkTargets: string[];
+	/** Maps slugified heading text → HeadingEntry for O(1) resolution. */
+	headingBySlug: Map<string, HeadingEntry>;
+	/** Maps normalized (lowercased, single-spaced) raw heading text → HeadingEntry. */
+	headingByText: Map<string, HeadingEntry>;
 	blocks: BlockEntry[];
 }
 
@@ -153,6 +164,27 @@ export interface ContentIndex {
 	byTitle: Map<string, ContentPage[]>;
 	byAlias: Map<string, ContentPage[]>;
 	byTag: Map<string, ContentPage[]>;
+	/** Case-insensitive pathKey → pages lookup. Populated when `enableFuzzyMatching` is available. */
+	byPathKeyCI: Map<string, ContentPage[]>;
+	/** Case-insensitive basename → pages lookup. Populated when `enableCaseInsensitiveLookup` is available. */
+	byBaseNameCI: Map<string, ContentPage[]>;
+	/** Raw markdown content keyed by absolute path, used by transclusion during the remark pass. */
+	rawContentByPath: Map<string, string>;
+	/**
+	 * Pre-built backlinks map, constructed during content indexing.
+	 * Maps each page's routePath to the pages that link to it.
+	 * Built once during index construction; no separate pass needed.
+	 */
+	backlinks: Map<string, BacklinkRef[]>;
+}
+
+/**
+ * A reference to a page that links to another page, used in the backlinks
+ * panel and the pre-built backlinks map on {@link ContentIndex}.
+ */
+export interface BacklinkRef {
+	routePath: string;
+	title: string;
 }
 
 /** Outcome of attempting to resolve a wikilink. */
@@ -173,6 +205,8 @@ export interface ResolvedWikiLink {
 	label?: string;
 	targetPage?: ContentPage;
 	message?: string;
+	/** Plain-text preview of the heading section content, for tooltips. */
+	description?: string;
 }
 
 /** Input required by {@link import("./resolve-wikilink.ts").resolveWikiLink}. */

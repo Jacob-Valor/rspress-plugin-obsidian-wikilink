@@ -1,1 +1,6 @@
-["getting-started", "advanced", "api"]
+[
+  "getting-started",
+  "examples",
+  "advanced",
+  "api"
+]
