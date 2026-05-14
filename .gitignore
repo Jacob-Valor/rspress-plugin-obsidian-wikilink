@@ -34,4 +34,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
+# Obsidian editor per-workspace state
+Obsidian Vault/.obsidian/workspace.json
+Obsidian Vault/.obsidian/workspace
+
 node_modules/
