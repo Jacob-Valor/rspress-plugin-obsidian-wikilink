@@ -1,5 +1,14 @@
 # rspress-plugin-obsidian-wikilink
 
+[![npm version](https://img.shields.io/npm/v/rspress-plugin-obsidian-wikilink?logo=npm)](https://www.npmjs.com/package/rspress-plugin-obsidian-wikilink)
+[![npm downloads](https://img.shields.io/npm/dm/rspress-plugin-obsidian-wikilink)](https://www.npmjs.com/package/rspress-plugin-obsidian-wikilink)
+[![license](https://img.shields.io/npm/l/rspress-plugin-obsidian-wikilink)](./LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/Jacob-Valor/rspress-plugin-obsidian-wikilink/ci.yml?branch=main&logo=github)](https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/actions)
+[![last commit](https://img.shields.io/github/last-commit/Jacob-Valor/rspress-plugin-obsidian-wikilink?logo=git)](https://github.com/Jacob-Valor/rspress-plugin-obsidian-wikilink/commits/main)
+[![Bun](https://img.shields.io/badge/Bun-000?logo=bun&logoColor=white)](https://bun.sh)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![semantic-release](https://img.shields.io/badge/semantic--release-ff69b4?logo=semanticrelease)](https://github.com/semantic-release/semantic-release)
+
 Obsidian-style wikilinks for Rspress. Write your docs in Obsidian, publish with Rspress.
 
 ## Features
