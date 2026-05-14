@@ -418,6 +418,7 @@ function extractHeadings(
 ): HeadingEntry[] {
 	const slugger = new GithubSlugger();
 	const headings: HeadingEntry[] = [];
+	const headingLineIndexes: number[] = [];
 
 	for (let index = 0; index < lines.length; index += 1) {
 		if (!isContent[index]) {
@@ -429,6 +430,7 @@ function extractHeadings(
 		const atxMatch = /^\s{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
 		if (atxMatch) {
 			pushHeading(headings, slugger, atxMatch[2] ?? "");
+			headingLineIndexes.push(index);
 			continue;
 		}
 
@@ -443,7 +445,45 @@ function extractHeadings(
 		}
 
 		pushHeading(headings, slugger, rawHeading);
+		headingLineIndexes.push(index);
 		index += 1; // skip the setext underline on the next iteration
+	}
+
+	// Second pass: extract preview text after each heading.
+	// Collects content lines until the next heading at the same or higher level,
+	// strips markdown formatting, and truncates to MAX_PREVIEW_LENGTH chars.
+	// Extracted buildingContentPage allows showing tooltip previews on hover.
+	const MAX_PREVIEW_LENGTH = 200;
+	for (let h = 0; h < headings.length; h++) {
+		const idx = headingLineIndexes[h];
+		if (idx === undefined) continue;
+		const startLine = idx + 1;
+		const endLine =
+			h + 1 < headings.length
+				? (headingLineIndexes[h + 1] ?? lines.length)
+				: lines.length;
+		const previewLines: string[] = [];
+		let charCount = 0;
+
+		for (
+			let i = startLine;
+			i < endLine && charCount < MAX_PREVIEW_LENGTH;
+			i++
+		) {
+			if (!isContent[i]) continue;
+			const text = stripMarkdownFormatting(lines[i] ?? "").trim();
+			if (!text) continue;
+			const remaining = MAX_PREVIEW_LENGTH - charCount;
+			previewLines.push(
+				text.length <= remaining ? text : text.slice(0, remaining),
+			);
+			charCount += text.length;
+		}
+
+		if (previewLines.length > 0) {
+			const entry = headings[h];
+			if (entry) entry.preview = previewLines.join(" ");
+		}
 	}
 
 	return headings;

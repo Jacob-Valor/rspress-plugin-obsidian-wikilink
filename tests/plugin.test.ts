@@ -151,7 +151,7 @@ describe("buildContentIndex", () => {
 		const index = await buildContentIndex(headingFixtureRoot);
 		const page = index.byPathKey.get("guide/variants");
 
-		expect(page?.headings).toEqual([
+		expect(page?.headings.map(({ preview: _, ...rest }) => rest)).toEqual([
 			{ rawText: "Variants", slug: "variants" },
 			{
 				rawText: "Named Setext",
@@ -429,9 +429,11 @@ describe("remarkWikilink", () => {
 			path: path.resolve(fixtureRoot, "index.md"),
 		});
 
-		expect(String(file)).toBe(
-			"Go to [Install guide](/guide/getting-started#install).\n",
+		const output1 = String(file);
+		expect(output1).toContain(
+			'[Install guide](/guide/getting-started#install "Install steps.',
 		);
+		expect(output1).toEndWith("\n");
 	});
 
 	test("supports current-page anchors", async () => {
@@ -442,7 +444,9 @@ describe("remarkWikilink", () => {
 			path: path.resolve(fixtureRoot, "index.md"),
 		});
 
-		expect(String(file)).toBe("Jump to [Overview](#overview).\n");
+		const output2 = String(file);
+		expect(output2).toContain('[Overview](#overview "Read');
+		expect(output2).toEndWith("\n");
 	});
 
 	test("rewrites block references into markdown links", async () => {

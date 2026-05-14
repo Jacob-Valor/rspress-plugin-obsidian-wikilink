@@ -176,7 +176,7 @@ function resolveWikilinksInAst(
 					replacementNodes.push(
 						parsed.isEmbed
 							? createEmbedNode(href, label)
-							: createLinkNode(href, label),
+							: createLinkNode(href, label, resolved.description),
 					);
 				} else {
 					replacementNodes.push(createTextNode(parsed.raw));
@@ -596,28 +596,32 @@ async function processEmbedsInTree(
 		enableCaseInsensitiveLookup: options.enableCaseInsensitiveLookup,
 	};
 
-	// Two-pass approach: collect nodes to process, then resolve async
+	// Two-pass approach: collect nodes with their positions, then resolve async
 	interface EmbedWork {
 		node: Text;
+		position: number;
+		parent: Parent;
 	}
 	const embedNodes: EmbedWork[] = [];
 
-	unistVisit(tree, "text", (node, _position, parent) => {
-		if (!parent || SKIP_PARENT_TYPES.has(parent.type)) return;
-		if (!node.value.includes("![[")) return;
+	unistVisit(tree, "text", (node, position, parent) => {
+		if (!parent || typeof position !== "number") return;
+		if (SKIP_PARENT_TYPES.has(parent.type)) return;
+		if (!node.value.includes("![")) return;
 		const embedMatches = [...node.value.matchAll(WIKILINK_EMBED_PATTERN)];
 		if (embedMatches.length > 0) {
-			embedNodes.push({ node });
+			embedNodes.push({ node, position, parent });
 		}
 	});
 
-	// Process all embed nodes with proper async file reads
-	for (const { node } of embedNodes) {
+	// Process all embed nodes with proper async file reads,
+	// building AST nodes (text + html) instead of a raw HTML string.
+	for (const { node, position, parent } of embedNodes) {
 		const text = node.value;
 		const embedMatches = [...text.matchAll(WIKILINK_EMBED_PATTERN)];
 		if (embedMatches.length === 0) continue;
 
-		let result = "";
+		const replacementNodes: PhrasingContent[] = [];
 		let lastEnd = 0;
 
 		for (const match of embedMatches) {
@@ -626,7 +630,7 @@ async function processEmbedsInTree(
 			const inner = match[1] ?? "";
 
 			if (start > lastEnd) {
-				result += text.slice(lastEnd, start);
+				replacementNodes.push(createTextNode(text.slice(lastEnd, start)));
 			}
 
 			const pipeIdx = inner.indexOf("|");
@@ -644,7 +648,10 @@ async function processEmbedsInTree(
 					);
 				}
 				const src = escapeHtmlAttribute(resolved.url);
-				result += `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`;
+				replacementNodes.push({
+					type: "html",
+					value: `<img src="${src}" alt="${escapeHtmlAttribute(target)}"${sizeAttr} loading="lazy" />`,
+				});
 			} else if (options.enableMediaEmbeds && AUDIO_EXTS.has(ext)) {
 				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
 				if (!resolved.found) {
@@ -653,7 +660,10 @@ async function processEmbedsInTree(
 					);
 				}
 				const src = escapeHtmlAttribute(resolved.url);
-				result += `<audio controls src="${src}"></audio>`;
+				replacementNodes.push({
+					type: "html",
+					value: `<audio controls src="${src}"></audio>`,
+				});
 			} else if (options.enableMediaEmbeds && VIDEO_EXTS.has(ext)) {
 				const sizeAttr = parseSizeAttr(sizeParam);
 				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
@@ -663,7 +673,10 @@ async function processEmbedsInTree(
 					);
 				}
 				const src = escapeHtmlAttribute(resolved.url);
-				result += `<video controls src="${src}"${sizeAttr}></video>`;
+				replacementNodes.push({
+					type: "html",
+					value: `<video controls src="${src}"${sizeAttr}></video>`,
+				});
 			} else if (options.enableMediaEmbeds && ext === PDF_EXT) {
 				const resolved = resolveMediaSrc(target, docsRoot, currentFilePath);
 				if (!resolved.found) {
@@ -672,7 +685,10 @@ async function processEmbedsInTree(
 					);
 				}
 				const src = escapeHtmlAttribute(resolved.url);
-				result += `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`;
+				replacementNodes.push({
+					type: "html",
+					value: `<iframe src="${src}" width="100%" height="600px" frameborder="0"></iframe>`,
+				});
 			} else if (options.enableTransclusion) {
 				const resolved = resolveWikiLink(parseWikiLink(target, fullMatch), {
 					currentPage,
@@ -685,12 +701,12 @@ async function processEmbedsInTree(
 						file.message(
 							`[rspress-plugin-obsidian-wikilink:transclusion] Circular transclusion detected: ${fullMatch} in "${currentPage.relativePath}".`,
 						);
-						result += fullMatch;
+						replacementNodes.push(createTextNode(fullMatch));
 					} else if (depth >= MAX_TRANSCLUSION_DEPTH) {
 						file.message(
 							`[rspress-plugin-obsidian-wikilink:transclusion] Max transclusion depth (${MAX_TRANSCLUSION_DEPTH}) reached for ${fullMatch} in "${currentPage.relativePath}".`,
 						);
-						result += fullMatch;
+						replacementNodes.push(createTextNode(fullMatch));
 					} else {
 						try {
 							const content = await fs.promises.readFile(
@@ -740,29 +756,38 @@ async function processEmbedsInTree(
 								depth + 1,
 							);
 
-							result += `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedHtml}\n</div>`;
+							replacementNodes.push({
+								type: "html",
+								value: `<div class="obsidian-transclusion" data-src="${escapeHtmlAttribute(resolved.href ?? "")}">\n${transcludedHtml}\n</div>`,
+							});
 						} catch (error) {
 							file.message(
 								`[rspress-plugin-obsidian-wikilink:transclusion] Failed to read "${resolved.targetPage.relativePath}" for ${fullMatch}: ${error instanceof Error ? error.message : String(error)}`,
 							);
-							result += fullMatch;
+							replacementNodes.push(createTextNode(fullMatch));
 						}
 					}
 				} else {
-					result += fullMatch;
+					replacementNodes.push(createTextNode(fullMatch));
 				}
 			} else {
-				result += fullMatch;
+				replacementNodes.push(createTextNode(fullMatch));
 			}
 
 			lastEnd = start + fullMatch.length;
 		}
 
 		if (lastEnd < text.length) {
-			result += text.slice(lastEnd);
+			replacementNodes.push(createTextNode(text.slice(lastEnd)));
 		}
 
-		node.value = result;
+		// Splice the replacement AST nodes in place of the original text node.
+		// Using html-type nodes instead of embedding HTML in a text node fixes
+		// the escaping bug where transcluded content appeared as escaped HTML.
+		const parentWithChildren = parent as Parent & {
+			children: PhrasingContent[];
+		};
+		parentWithChildren.children.splice(position, 1, ...replacementNodes);
 	}
 }
 
@@ -779,10 +804,11 @@ function createTextNode(value: string): Text {
 	};
 }
 
-function createLinkNode(url: string, label: string): Link {
+function createLinkNode(url: string, label: string, title?: string): Link {
 	return {
 		type: "link",
 		url,
+		...(title ? { title } : {}),
 		children: [
 			{
 				type: "text",

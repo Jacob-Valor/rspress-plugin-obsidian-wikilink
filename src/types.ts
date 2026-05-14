@@ -116,6 +116,10 @@ export interface HeadingEntry {
 	rawText: string;
 	slug: string;
 	explicitId?: string;
+	/** Short plain-text preview of the content following this heading
+	 *  (the first ~200 characters, markdown stripped). Used for tooltip
+	 *  previews on heading wikilinks. */
+	preview?: string;
 }
 
 /** A single block anchor indexed from a page. */
@@ -201,6 +205,8 @@ export interface ResolvedWikiLink {
 	label?: string;
 	targetPage?: ContentPage;
 	message?: string;
+	/** Plain-text preview of the heading section content, for tooltips. */
+	description?: string;
 }
 
 /** Input required by {@link import("./resolve-wikilink.ts").resolveWikiLink}. */

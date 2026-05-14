@@ -130,10 +130,17 @@ function resolveCurrentPageReference(
 		};
 	}
 
+	const description =
+		subpath.kind === "heading"
+			? (page.headingBySlug.get(resolvedSubpath)?.preview ??
+				page.headingByText.get(normalizeLookupValue(subpath.value))?.preview)
+			: undefined;
+
 	return {
 		status: "ok",
 		href: `#${resolvedSubpath}`,
 		label: parsed.alias ?? subpath.value,
+		description,
 		targetPage: page,
 	};
 }
@@ -165,10 +172,19 @@ function resolveAgainstPage(
 		};
 	}
 
+	// Look up heading preview for tooltip when the target includes a heading.
+	const description =
+		parsed.subpath?.kind === "heading"
+			? (page.headingBySlug.get(resolvedSubpath)?.preview ??
+				page.headingByText.get(normalizeLookupValue(parsed.subpath.value))
+					?.preview)
+			: undefined;
+
 	return {
 		status: "ok",
 		href: `${page.routePath}#${resolvedSubpath}`,
 		label,
+		description,
 		targetPage: page,
 	};
 }

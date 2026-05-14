@@ -135,11 +135,11 @@ if (resolved.status === "ok") {
 
 ### `buildBacklinksIndex(index: ContentIndex): Promise<Map<string, BacklinkRef[]>>`
 
-Reads all pages and builds a map from each page's route to the list of pages that link to it. Reads files from disk on every call.
+Builds the backlinks map from the content index. Backlinks are now built automatically during content indexing (via `buildContentIndex`), so you seldom need this function directly. Use `getCachedBacklinksIndex` instead.
 
 ### `getCachedBacklinksIndex(index: ContentIndex): Promise<Map<string, BacklinkRef[]>>`
 
-Returns the cached backlinks map when the same `ContentIndex` object is passed. Automatically invalidated when the content index changes (i.e. when `getCachedContentIndex` returns a new object after file changes).
+Returns the backlinks map for the given content index. When the index was built via `buildContentIndex` or `getCachedContentIndex`, backlinks are already populated — this is a simple property access with no I/O. A fallback cache handles indexes constructed manually.
 
 ```ts
 import { getCachedContentIndex, getCachedBacklinksIndex } from "rspress-plugin-obsidian-wikilink";
@@ -234,18 +234,22 @@ interface WikilinkMatch {
 
 ```ts
 interface ContentPage {
-  absolutePath: string;    // Absolute file path on disk
-  relativePath: string;    // Relative to docs root e.g. "guide/intro.md"
-  routePath: string;       // Rspress route e.g. "/guide/intro"
-  pathKey: string;         // Normalised path key e.g. "guide/intro"
-  baseName: string;        // Filename without extension e.g. "intro"
-  title?: string;          // Frontmatter title
-  aliases: string[];       // Frontmatter aliases
-  tags: string[];          // Frontmatter tags
-  cssclasses: string[];    // Frontmatter cssclasses
-  excerpt?: string;        // Frontmatter excerpt
-  headings: HeadingEntry[];
-  blocks: BlockEntry[];
+  absolutePath: string;        // Absolute file path on disk
+  relativePath: string;        // Relative to docs root e.g. "guide/intro.md"
+  routePath: string;           // Rspress route e.g. "/guide/intro"
+  pathKey: string;             // Normalised path key e.g. "guide/intro"
+  baseName: string;            // Filename without extension e.g. "intro"
+  title?: string;              // Frontmatter title
+  aliases: string[];           // Frontmatter aliases
+  tags: string[];              // Frontmatter tags
+  cssclasses: string[];        // Frontmatter cssclasses
+  excerpt?: string;            // Frontmatter excerpt
+  publish: boolean;            // Frontmatter publish (default: true)
+  headings: HeadingEntry[];    // Parsed headings from the file
+  wikilinkTargets: string[];   // Pre-extracted, deduplicated wikilink targets (used for backlinks)
+  headingBySlug: Map<string, HeadingEntry>;   // Slug → heading, O(1) resolution
+  headingByText: Map<string, HeadingEntry>;   // Normalized text → heading, O(1) resolution
+  blocks: BlockEntry[];        // Parsed block IDs from the file
 }
 ```
 
@@ -261,6 +265,10 @@ interface ContentIndex {
   byTitle: Map<string, ContentPage[]>;
   byAlias: Map<string, ContentPage[]>;
   byTag: Map<string, ContentPage[]>;
+  byPathKeyCI: Map<string, ContentPage[]>;     // Case-insensitive pathKey lookup
+  byBaseNameCI: Map<string, ContentPage[]>;    // Case-insensitive basename lookup
+  rawContentByPath: Map<string, string>;       // Raw markdown content, used by transclusion
+  backlinks: Map<string, BacklinkRef[]>;        // Pre-built during indexing
 }
 ```
 
@@ -268,9 +276,10 @@ interface ContentIndex {
 
 ```ts
 interface HeadingEntry {
-  rawText: string;      // Heading text (markdown formatting stripped)
-  slug: string;         // GitHub-style slug
-  explicitId?: string;  // Custom anchor from {#custom-anchor}
+  rawText: string;          // Heading text (markdown formatting stripped)
+  slug: string;             // GitHub-style slug
+  explicitId?: string;      // Custom anchor from {#custom-anchor}
+  preview?: string;         // Plain-text content snippet after heading (for tooltips)
 }
 ```
 
@@ -291,6 +300,7 @@ interface ResolvedWikiLink {
   label?: string;         // Display text
   targetPage?: ContentPage;
   message?: string;       // Diagnostic message on non-ok status
+  description?: string;   // Heading content preview for tooltips
 }
 ```
 
