@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.1 - 2026-05-06
+
+### Added
+
+- **Thread-safe slug generation** — replaced shared `GithubSlugger` instance with per-call fresh instances to prevent race conditions in concurrent builds
+- **Robust YAML frontmatter parsing** — replaced custom regex parser with `gray-matter`, supporting multi-line values, inline arrays, nested objects, and all standard YAML constructs
+- **AST-based transclusion** — transcluded content is now parsed through remark and converted to HTML via rehype, ensuring all markdown syntax (bold, lists, code blocks, etc.) renders correctly inside transclusions
+- **`publish: false` frontmatter support** — pages with `publish: false` are excluded from the content index, wikilink resolution, tag pages, and backlinks
+- **Live examples page** — added a documentation page that demonstrates all plugin features in action (callouts, wikilinks, tags, highlights, footnotes, transclusion, comments)
+- **Complex YAML regression tests** — added test fixtures covering multi-line arrays, inline arrays, and string-to-boolean `publish` coercion
+
+### Fixed
+
+- README version claim now matches `package.json` (0.1.1)
+- Documentation navigation now includes Examples and API links
+
 ## 0.0.1 - 2026-04-09
 
 Initial release.

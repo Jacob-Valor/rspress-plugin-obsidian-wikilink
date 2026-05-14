@@ -436,4 +436,4 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 ## Status
 
-v0.3.x — 100% Obsidian markdown feature coverage for static Rspress docs.
+v0.1.1 — 100% Obsidian markdown feature coverage for static Rspress docs.
